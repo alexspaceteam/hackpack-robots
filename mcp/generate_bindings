@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+import json
+import sys
+import os
+from datetime import datetime
+
+def map_rust_type_to_c(rust_type):
+    """Map Rust-style types back to C fixed-width types for bindings."""
+    type_map = {
+        'void': 'void',
+        'i8': 'int8_t',
+        'u8': 'uint8_t',
+        'i16': 'int16_t',
+        'u16': 'uint16_t',
+        'i32': 'int32_t',
+        'u32': 'uint32_t',
+        'i64': 'int64_t',
+        'u64': 'uint64_t',
+        'f32': 'float',
+        'f64': 'double',
+        'CStr': 'const char *',
+    }
+    return type_map.get(rust_type, rust_type)
+
+def get_type_size(rust_type):
+    """Get exact byte size for Rust-style types."""
+    size_map = {
+        'i8': 1, 'u8': 1,
+        'i16': 2, 'u16': 2,
+        'i32': 4, 'u32': 4,
+        'i64': 8, 'u64': 8,
+        'f32': 4, 'f64': 8,  # Note: Arduino double is 4 bytes but we treat as 8 in protocol
+        'CStr': -1,  # Variable length
+    }
+    return size_map.get(rust_type, None)
+
+def load_manifest(manifest_content):
+    """Load functions from JSON manifest."""
+    try:
+        manifest = json.loads(manifest_content)
+        functions = []
+        
+        for tool in manifest.get('functions', []):
+            # Skip the deviceId sentinel entry (tag 0)
+            if tool.get('tag') == 0:
+                continue
+                
+            func_info = {
+                'name': tool['name'],
+                'type': 'void ()',  # Will be updated based on params
+                'return_type': tool.get('return', 'void'),
+                'mcp_tool_description': tool['desc'],
+                'parameters': tool.get('params', [])
+            }
+            functions.append(func_info)
+        
+        return functions, manifest.get('name', 'unknown'), manifest.get('version', '00000000')
+    except json.JSONDecodeError as e:
+        raise Exception(f"Invalid JSON manifest: {e}")
+
+
+def generate_hpp_header(functions, project_name, version_hash):
+    # Generate dispatch cases for each function
+    dispatch_cases = ""
+    
+    # Add case 0 for deviceId (treat like any other function)
+    deviceId_func = {
+        'name': 'deviceId',
+        'parameters': [],
+        'return_type': 'CStr'
+    }
+    all_functions = [deviceId_func] + functions
+    
+    for i, func in enumerate(all_functions):
+        func_name = func['name']
+        params = func['parameters']
+        
+        dispatch_cases += f"""        case {i}: // {func_name}
+        {{
+"""
+        
+        if params:
+            # Generate parameter pointers
+            param_derefs = []
+            offset = 1  # Skip tag byte
+            
+            # Calculate expected length (tag + all params)
+            expected_len = 1
+            for param in params:
+                rust_type = param['type']
+                type_size = get_type_size(rust_type)
+                if type_size is None:
+                    raise Exception(f"Unknown Rust parameter type: {rust_type}")
+                elif type_size == -1:  # Variable length (CStr)
+                    expected_len = -1
+                    break
+                else:
+                    expected_len += type_size
+            
+            if expected_len > 0:
+                dispatch_cases += f"""            if (len != {expected_len}) return -1; // invalid length
+"""
+            else:
+                dispatch_cases += f"""            if (len < 1) return -1; // invalid length
+"""
+            
+            # Handle parameters sequentially with proper string length calculation
+            dispatch_cases += f"""            size_t offset = 1; // start after tag byte
+"""
+            for param in params:
+                param_name = param['name']
+                rust_type = param['type']
+                c_type = map_rust_type_to_c(rust_type)
+                type_size = get_type_size(rust_type)
+                
+                if type_size is None:
+                    raise Exception(f"Unknown Rust parameter type: {rust_type}")
+                
+                if rust_type == 'CStr':
+                    dispatch_cases += f"""            const char* {param_name} = reinterpret_cast<const char*>(data + offset);
+            size_t {param_name}_len = strnlen({param_name}, len - offset);
+            if (offset + {param_name}_len >= len) return -1; // no null terminator
+            offset += {param_name}_len + 1; // skip string + null terminator
+"""
+                    param_derefs.append(param_name)
+                else:
+                    dispatch_cases += f"""            if (offset + {type_size} > len) return -1; // parameter doesn't fit
+            const {c_type}* {param_name}_ptr = reinterpret_cast<const {c_type}*>(data + offset);
+            offset += {type_size};
+"""
+                    param_derefs.append(f"*{param_name}_ptr")
+                
+            # Generate function call and pack return value
+            param_list = ", ".join(param_derefs)
+            return_type = func.get('return_type')
+            
+            if return_type is None or return_type == 'void':
+                # No return value
+                dispatch_cases += f"""            {func_name}({param_list});
+            return 0;
+        }}
+"""
+            elif return_type == 'CStr':
+                # String return value
+                dispatch_cases += f"""            const char* result = {func_name}({param_list});
+            size_t src_len = strlcpy(reinterpret_cast<char*>(out), result, out_max_len);
+            if (src_len >= out_max_len) return -1; // string truncated
+            *out_len = src_len + 1;
+            return 0;
+        }}
+"""
+            else:
+                # Fixed-size return value
+                c_type = map_rust_type_to_c(return_type)
+                type_size = get_type_size(return_type)
+                dispatch_cases += f"""            {c_type} result = {func_name}({param_list});
+            if ({type_size} > out_max_len) return -1; // output buffer too small
+            *reinterpret_cast<{c_type}*>(out) = result;
+            *out_len = {type_size};
+            return 0;
+        }}
+"""
+        else:
+            # No parameters - only tag byte expected
+            dispatch_cases += f"""            if (len != 1) return -1; // invalid length
+"""
+            return_type = func.get('return_type')
+            
+            if return_type is None or return_type == 'void':
+                # No return value
+                dispatch_cases += f"""            {func_name}();
+            return 0;
+        }}
+"""
+            elif return_type == 'CStr':
+                # String return value
+                dispatch_cases += f"""            const char* result = {func_name}();
+            size_t src_len = strlcpy(reinterpret_cast<char*>(out), result, out_max_len);
+            if (src_len >= out_max_len) return -1; // string truncated
+            *out_len = src_len + 1;
+            return 0;
+        }}
+"""
+            else:
+                # Fixed-size return value
+                c_type = map_rust_type_to_c(return_type)
+                type_size = get_type_size(return_type)
+                dispatch_cases += f"""            {c_type} result = {func_name}();
+            if ({type_size} > out_max_len) return -1; // output buffer too small
+            *reinterpret_cast<{c_type}*>(out) = result;
+            *out_len = {type_size};
+            return 0;
+        }}
+"""
+
+    header = f"""#ifndef MCP_BINDINGS_HPP
+#define MCP_BINDINGS_HPP
+
+#include <stdint.h>
+
+// String functions for Arduino compatibility
+inline size_t strlen_safe(const char* str) {{
+    size_t len = 0;
+    while (str[len] != '\\0') len++;
+    return len;
+}}
+
+inline void memcpy_safe(void* dst, const void* src, size_t n) {{
+    char* d = (char*)dst;
+    const char* s = (const char*)src;
+    for (size_t i = 0; i < n; i++) d[i] = s[i];
+}}
+
+// Auto-generated MCP bindings header
+// Generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+namespace MCPBindings {{
+    // Get device ID
+    inline const char* deviceId() {{ return "{project_name}-{version_hash}"; }}
+    
+    // Dispatch function calls from binary data
+    int dispatch(const uint8_t* data, int len, uint8_t* out, int out_max_len, int* out_len) {{
+        uint8_t tag = data[0];
+        *out_len = 0;
+        
+        switch (tag) {{
+{dispatch_cases}        default:
+            // Unknown function tag
+            return -1;
+        }}
+    }}
+}}
+
+#endif // MCP_BINDINGS_HPP
+"""
+    return header
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print("Usage: generate_bindings <manifest.json>", file=sys.stderr)
+        sys.exit(1)
+    
+    manifest_file = sys.argv[1]
+    
+    try:
+        with open(manifest_file, 'r') as f:
+            manifest_content = f.read()
+        
+        functions, project_name, version_hash = load_manifest(manifest_content)
+        hpp_content = generate_hpp_header(functions, project_name, version_hash)
+        print(hpp_content)
+        
+    except Exception as e:
+        print(f"// Error generating bindings: {str(e)}", file=sys.stderr)
+        print(f"""#ifndef MCP_BINDINGS_HPP
+#define MCP_BINDINGS_HPP
+
+// Error during generation: {str(e)}
+
+namespace MCPBindings {{
+    void initialize() {{ /* stub */ }}
+    void process() {{ /* stub */ }}
+    bool isReady() {{ return false; }}
+}}
+
+#endif // MCP_BINDINGS_HPP""")
+        sys.exit(1)

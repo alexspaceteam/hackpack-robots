@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+import re
+import sys
+import os
+import json
+import hashlib
+
+def map_c_type_to_rust(c_type):
+    """Map C types to Rust-style exact integer types for manifest."""
+    type_map = {
+        'void': None,  # JSON null for void return type
+        'int': 'i16',  # Arduino int is 2 bytes
+        'char': 'i8',
+        'unsigned char': 'u8',
+        'uint8_t': 'u8',
+        'short': 'i16',
+        'unsigned short': 'u16',
+        'uint16_t': 'u16',
+        'long': 'i32',  # Arduino long is 4 bytes
+        'unsigned long': 'u32',
+        'uint32_t': 'u32',
+        'float': 'f32',
+        'double': 'f64',  # Arduino double is 4 bytes but we'll call it f64
+        'const char *': 'CStr',
+        'const char*': 'CStr',
+    }
+    return type_map.get(c_type, c_type)  # Return original if not found
+
+def parse_text_ast(ast_content):
+    """Parse text AST output from clang to extract functions with MCP_TOOL annotations."""
+    functions = []
+    lines = ast_content.split('\n')
+    
+    # First pass: collect MCP_DESCRIPTION values
+    project_description = ""
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if 'AnnotateAttr' in line and 'MCP_DESCRIPTION:' in line:
+            desc_match = re.search(r'"MCP_DESCRIPTION:([^"]*)"', line)
+            if desc_match:
+                project_description = desc_match.group(1)
+                break
+        i += 1
+    
+    # Second pass: collect MCP_TOOL functions
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        
+        # Look for FunctionDecl first
+        func_match = re.search(r'FunctionDecl.*?(\w+)\s+\'([^\']+)\'', line)
+        if func_match:
+            func_name = func_match.group(1)
+            func_type = func_match.group(2)
+            
+            # Look ahead for AnnotateAttr with MCP_TOOL in the function's subtree
+            mcp_tool_desc = None
+            for j in range(i+1, min(len(lines), i+50)):
+                attr_line = lines[j]
+                if 'AnnotateAttr' in attr_line and 'MCP_TOOL:' in attr_line:
+                    annotation_match = re.search(r'"MCP_TOOL:([^"]*)"', attr_line)
+                    mcp_tool_desc = annotation_match.group(1) if annotation_match else "Unknown"
+                    break
+                # Stop if we hit another FunctionDecl (we've gone too far)
+                elif 'FunctionDecl' in attr_line and j != i:
+                    break
+            
+            # Only process if we found an MCP_TOOL annotation
+            if mcp_tool_desc is not None:
+                # Extract return type from function signature and map to Rust-style
+                c_return_type = func_type.split('(')[0].strip()
+                rust_return_type = map_c_type_to_rust(c_return_type)
+                
+                func_info = {
+                    'name': func_name,
+                    'type': func_type,
+                    'return_type': rust_return_type,
+                    'mcp_tool_description': mcp_tool_desc,
+                    'parameters': []
+                }
+                
+                # Look ahead for parameter declarations
+                for k in range(i+1, min(len(lines), i+50)):
+                    param_line = lines[k]
+                    if 'ParmVarDecl' in param_line:
+                        param_match = re.search(r'ParmVarDecl.*?(\w+)\s+\'([^\']+)\'', param_line)
+                        if param_match:
+                            param_name = param_match.group(1)
+                            c_param_type = param_match.group(2)
+                            rust_param_type = map_c_type_to_rust(c_param_type)
+                            func_info['parameters'].append({
+                                'name': param_name,
+                                'type': rust_param_type
+                            })
+                    elif 'CompoundStmt' in param_line:
+                        # End of function declaration
+                        break
+                
+                functions.append(func_info)
+        i += 1
+    
+    return functions, project_description
+
+def generate_manifest_json(functions, project_name, project_description, version):
+    
+    # Create compact manifest with 1-based numeric tags
+    functions_list = []
+    
+    # Add sentinel entry for deviceId with tag 0
+    functions_list.append({
+        "tag": 0,
+        "name": "deviceId", 
+        "desc": "Get unique device identifier",
+        "return": "CStr",
+        "params": []
+    })
+    
+    for i, func in enumerate(functions, 1):
+        # Build parameters array
+        params = []
+        for param in func['parameters']:
+            params.append({
+                "name": param['name'],
+                "type": param['type']
+            })
+        
+        functions_list.append({
+            "tag": i,
+            "name": func['name'],
+            "desc": func['mcp_tool_description'],
+            "return": func['return_type'],
+            "params": params
+        })
+    
+    manifest = {
+        "name": project_name,
+        "description": project_description,
+        "version": version,
+        "functions": functions_list
+    }
+    
+    return json.dumps(manifest, indent=2)
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print("Usage: generate_manifest <ast_file.txt> <version_hash>", file=sys.stderr)
+        sys.exit(1)
+    
+    ast_file = sys.argv[1]
+    version = sys.argv[2]
+    
+    try:
+        with open(ast_file, 'r') as f:
+            ast_content = f.read()
+        
+        # Extract project name from ast file path
+        project_name = os.path.basename(ast_file).replace('-ast.txt', '')
+        
+        functions, project_description = parse_text_ast(ast_content)
+        json_content = generate_manifest_json(functions, project_name, project_description, version)
+        print(json_content)
+        
+    except Exception as e:
+        print(f'{{"error": "Error generating manifest: {str(e)}"}}', file=sys.stderr)
+        sys.exit(1)
