@@ -119,10 +119,11 @@ impl McpServer {
         connection_manager: Arc<ConnectionManager>,
         manifest_manager: Arc<ManifestManager>,
     ) -> Result<Response<BoxBody<hyper::body::Bytes, hyper::Error>>, hyper::Error> {
-        
+
+        let headers = req.headers().clone();
         let body_bytes = req.collect().await?.to_bytes();
         let body_str = String::from_utf8_lossy(&body_bytes);
-        
+
         debug!("Received MCP request: {}", body_str);
         
         let request: McpRequest = match serde_json::from_str(&body_str) {
@@ -140,9 +141,12 @@ impl McpServer {
         let response = match request.method.as_str() {
             "initialize" => Self::handle_initialize(&request).await,
             "notifications/initialized" => {
-                // Handle initialized notification - no response needed for notifications
+                // Handle initialized notification - keep connection open for SSE
                 info!("Received initialized notification from client");
-                return Ok(Self::empty_response());
+                info!("Request headers: {:?}", headers);
+
+                // Return SSE stream that stays open
+                return Ok(Self::sse_stream_response());
             }
             "tools/list" => Self::handle_tools_list(&request, &connection_manager, &manifest_manager).await,
             "tools/call" => Self::handle_tools_call(&request, &connection_manager, &manifest_manager).await,
@@ -457,12 +461,36 @@ impl McpServer {
 
     fn empty_response() -> Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
         Response::builder()
-            .status(StatusCode::NO_CONTENT)
+            .status(StatusCode::OK)
             .header("Content-Type", "application/json")
             .header("Access-Control-Allow-Origin", "*")
             .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             .header("Access-Control-Allow-Headers", "Content-Type")
-            .body(BoxBody::new(Full::new("".into()).map_err(|e| match e {})))
+            .body(BoxBody::new(Full::new("{}".into()).map_err(|e| match e {})))
+            .unwrap()
+    }
+
+    fn sse_stream_response() -> Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
+        use tokio_stream::wrappers::ReceiverStream;
+
+        // Create a channel and spawn a task to keep the sender alive indefinitely
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<hyper::body::Frame<hyper::body::Bytes>, hyper::Error>>(1);
+
+        // Spawn a task that holds the sender forever, keeping the stream alive
+        tokio::spawn(async move {
+            let _tx = tx; // Keep sender alive
+            // Sleep forever - this keeps the connection open
+            std::future::pending::<()>().await;
+        });
+
+        let stream = ReceiverStream::new(rx);
+
+        Response::builder()
+            .status(StatusCode::ACCEPTED)
+            .header("Content-Type", "text/event-stream")
+            .header("Cache-Control", "no-cache")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(BoxBody::new(http_body_util::StreamBody::new(stream)))
             .unwrap()
     }
 }
