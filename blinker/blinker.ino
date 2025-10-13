@@ -7,9 +7,10 @@ MCP_DESCRIPTION(
     "LED blinker with remote control functions"
 )
 
-const int greenPin = 5;
-const int yellowPin = 4;
-const int redPin = 3;
+const int greenPin = 14;
+const int yellowPin = 15;
+const int redPin = 16;
+
 int currentLed = -1; // Track which LED is currently active
 
 void setLedState(int pin, int level) {
@@ -35,7 +36,7 @@ void switchToGreen() {
     setLedState(greenPin, HIGH);
 }
 
-MCP_TOOL("Blink last active LED n times")
+MCP_TOOL("  ")
 void blinkNTimes(int n) {
     int originalLed = currentLed;
     for (int i = 0; i < n; i++) {
@@ -87,42 +88,6 @@ void printMessage(const char* msg, int times) {
 // }
 
 #include "build/mcp_bindings.hpp"
-
-// Implementation of MCPHandler::process_frame (after bindings are available)
-void MCPHandler::process_frame() {
-    // Frame format: [data...][crc8]
-    if (frame_pos < 2) return; // Need at least data + CRC
-    
-    int data_len = frame_pos - 1;
-    uint8_t received_crc = frame_buffer[frame_pos - 1];
-    uint8_t calculated_crc = crc8(frame_buffer, data_len);
-    
-    if (received_crc != calculated_crc) {
-        // CRC mismatch - send error response
-        uint8_t error_response[2] = {0xFF, 0x01}; // Error code 1: CRC error
-        uint8_t error_crc = crc8(error_response, 1);
-        error_response[1] = error_crc;
-        send_slip_frame(error_response, 2);
-        return;
-    }
-    
-    // CRC valid - dispatch the command
-    int response_len;
-    int result = MCPBindings::dispatch(frame_buffer, data_len, response_buffer, MAX_FRAME_SIZE - 1, &response_len);
-    
-    if (result == 0) {
-        // Success - send response with CRC
-        uint8_t response_crc = crc8(response_buffer, response_len);
-        response_buffer[response_len] = response_crc;
-        send_slip_frame(response_buffer, response_len + 1);
-    } else {
-        // Error - send error response
-        uint8_t error_response[2] = {0xFF, 0x02}; // Error code 2: Dispatch error
-        uint8_t error_crc = crc8(error_response, 1);
-        error_response[1] = error_crc;
-        send_slip_frame(error_response, 2);
-    }
-}
 
 void setup() {
     Serial.begin(115200);

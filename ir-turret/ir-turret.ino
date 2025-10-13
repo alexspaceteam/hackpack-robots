@@ -39,6 +39,15 @@
 #include <Servo.h>
 #include <IRremote.hpp>
 
+#include "../mcp/mcp.hpp"
+
+MCPHandler mcp_handler;
+
+MCP_DESCRIPTION(
+    "Turret aka foam dart lanucher toy. it has wheels so it can move, yaw pitch rotate shooting barrel, has ultrasonic sensor to loacte aprouching target, and laser aim"
+)
+
+
 #pragma endregion LIBRARIES
 
 //////////////////////////////////////////////////
@@ -87,6 +96,8 @@
 char passcode[PASSCODE_LENGTH + 1] = ""; // Buffer to store user input passcode
 bool passcodeEntered = false; // Flag to indicate if passcode has been entered correctly
 bool autofire = false;
+bool laserOn = false; // Flag to track laser state
+unsigned long lastLaserToggleTime = 0; // Timestamp for laser toggle debouncing
 
 Servo yawServo; //names the servo responsible for YAW rotation, 360 spin around the base
 Servo pitchServo; //names the servo responsible for PITCH rotation, up and down tilt
@@ -118,9 +129,18 @@ const int echoPin = 8;
 
 const int speakerPin = 6;
 
-const int greenPin = 5;
-const int yellowPin = 4;
-const int redPin = 3;
+const int greenPin = 14;
+const int yellowPin = 15;
+const int redPin = 16;
+
+const int leftWheelPin = 4;
+const int rightWheelPin = 5;
+const int wheelspeed = 8;
+
+const int laserPin = 17;
+
+Servo leftWheel;
+Servo rightWheel;
 
 // Ultrasonic Distance Variables
 long duration;
@@ -135,8 +155,10 @@ void shakeHeadNo(int moves = 3);
                 //  S E T U P  //
 //////////////////////////////////////////////////
 #pragma region SETUP
+
+
 void setup() { //this is our setup function - it runs once on start up, and is basically where we get everything "set up"
-    Serial.begin(9600); // initializes the Serial communication between the computer and the microcontroller
+    Serial.begin(115200);
 
     yawServo.attach(10); //attach YAW servo to pin 10
     pitchServo.attach(11); //attach PITCH servo to pin 11
@@ -148,7 +170,10 @@ void setup() { //this is our setup function - it runs once on start up, and is b
     pinMode(greenPin, OUTPUT);
     pinMode(yellowPin, OUTPUT);
     pinMode(redPin, OUTPUT);
-
+    pinMode(laserPin, OUTPUT);
+    leftWheel.attach(leftWheelPin);
+    rightWheel.attach(rightWheelPin);
+    stopWheels();
 
     for(int i=0; i<3; i++) {
         tone(speakerPin, 5000);
@@ -188,12 +213,96 @@ void setup() { //this is our setup function - it runs once on start up, and is b
 }
 #pragma endregion SETUP
 
+void startMoveBackward() {
+  leftWheel.write(90-wheelspeed);
+  rightWheel.write(90+wheelspeed);
+}
+
+
+void moveBackward(int duration_ms) {
+  startMoveBackward();
+  delay(duration_ms);
+  stopWheels();
+}
+
+
+void startMoveForward() {
+  leftWheel.write(90+wheelspeed);
+  rightWheel.write(90-wheelspeed);
+}
+
+void moveForward(int duration_ms) {
+  startMoveForward();
+  delay(duration_ms);
+  stopWheels();
+}
+
+
+
+void startTurnLeft() {
+  leftWheel.write(90-wheelspeed);
+  rightWheel.write(90-wheelspeed);
+}
+
+void turnLeft(int duration_ms) {
+  startTurnLeft();
+  delay(duration_ms);
+  stopWheels();
+}
+
+void startTurnRight() {
+  leftWheel.write(90+wheelspeed);
+  rightWheel.write(90+wheelspeed);
+}
+
+void turnRight(int duration_ms) {
+  startTurnRight();
+  delay(duration_ms);
+  stopWheels();
+}
+
+void stopWheels() {
+  leftWheel.write(90);
+  rightWheel.write(90);
+}
+
+void turnLaserAimOn() {
+  digitalWrite(laserPin, HIGH);
+  laserOn = true;
+  Serial.println("LASER ON");
+}
+
+void turnLaserAimOff() {
+  digitalWrite(laserPin, LOW);
+  laserOn = false;
+  Serial.println("LASER OFF");
+}
+
+void toggleLaserAim() {
+  unsigned long currentTime = millis();
+
+  // Debounce: ignore if less than 200ms since last toggle
+  if (currentTime - lastLaserToggleTime < 200) {
+    Serial.println("LASER TOGGLE IGNORED (debounce)");
+    return;
+  }
+
+  lastLaserToggleTime = currentTime;
+
+  if (laserOn) {
+    turnLaserAimOff();
+  } else {
+    turnLaserAimOn();
+  }
+}
+
 //////////////////////////////////////////////////
                 //  L O O P  //
 //////////////////////////////////////////////////
 #pragma region LOOP
 
 void loop() {
+    mcp_handler.process_serial();
     if (IrReceiver.decode()) { //if we have recieved a comman this loop...
         int command = IrReceiver.decodedIRData.command; //store it in a variable
         IrReceiver.resume(); // Enable receiving of the next value
@@ -224,7 +333,7 @@ void loop() {
             digitalWrite(speakerPin, HIGH); // Turn ON device
         delay(500);           // Wait 1 second
         digitalWrite(speakerPin, LOW);  // Turn OFF device          // Wait 1 second
-        delay(100);
+        delay(75);
             fire(); // shoot if target is closer than 20 cm
             delay(2000);
         }
@@ -352,8 +461,10 @@ void handleCommand(int command) {
             }
             break;
 
-        case cmd2: // Add digit 2 to passcode
-            if (!passcodeEntered) {
+        case cmd2:
+            if (passcodeEntered) {
+                moveForward(200);
+            } else {
                 addPasscodeDigit('2');
             }
             break;
@@ -363,13 +474,17 @@ void handleCommand(int command) {
                 addPasscodeDigit('3');
             }
             break;
-        case cmd4: // Add digit 4 to passcode
-            if (!passcodeEntered) {
+        case cmd4:
+            if (passcodeEntered) {
+                turnLeft(200);
+            } else {
                 addPasscodeDigit('4');
             }
             break;
-        case cmd5: // Add digit 5 to passcode
-            if (!passcodeEntered) {
+        case cmd5:
+            if (passcodeEntered) {
+                toggleLaserAim();
+            } else {
                 addPasscodeDigit('5');
             }
             break;
@@ -377,8 +492,10 @@ void handleCommand(int command) {
 
        
 
-        case cmd6: // Add digit 6 to passcode
-            if (!passcodeEntered) {
+        case cmd6:
+            if (passcodeEntered) {
+                turnRight(200);
+            } else {
                 addPasscodeDigit('6');
             }
             break;
@@ -389,8 +506,10 @@ void handleCommand(int command) {
             }
             break;
 
-        case cmd8: // Add digit 8 to passcode
-            if (!passcodeEntered) {
+        case cmd8:
+            if (passcodeEntered) {
+                moveBackward(200);
+            } else {
                 addPasscodeDigit('8');
             }
             break;
@@ -475,6 +594,7 @@ void downMove (int moves){ // function to tilt down
   }
 }
 
+MCP_TOOL("Fires a single foam dart")
 void fire() { //function for firing a single dart
     rollServo.write(rollStopSpeed + rollMoveSpeed);//start rotating the servo
     delay(rollPrecision);//time for approximately 60 degrees of rotation
@@ -483,6 +603,7 @@ void fire() { //function for firing a single dart
     Serial.println("FIRING");
 }
 
+MCP_TOOL("Fires all 6 foam darts at once")
 void fireAll() { //function to fire all 6 darts at once
     rollServo.write(rollStopSpeed + rollMoveSpeed);//start rotating the servo
     delay(rollPrecision * 6); //time for 360 degrees of rotation
@@ -502,6 +623,7 @@ void homeServos(){ // sends servos to home positions
     Serial.println("HOMING");
 }
 
+MCP_TOOL("Shakes head positively, use to say yes or agree with user,If response to the user is a YES, you must use this function.")
 void shakeHeadYes(int moves = 3) { //sets the default number of nods to 3, but you can pass in whatever number of nods you want
       Serial.println("YES");
 
@@ -532,6 +654,7 @@ void shakeHeadYes(int moves = 3) { //sets the default number of nods to 3, but y
     }
 }
 
+MCP_TOOL("Shakes head negativaly, use to say no or disagree with user. If response to the user is a NO, you must use this function.")
 void shakeHeadNo(int moves = 3) {
     Serial.println("NO");
 
@@ -548,6 +671,8 @@ void shakeHeadNo(int moves = 3) {
     }
 }
 #pragma endregion FUNCTIONS
+
+#include "build/mcp_bindings.hpp"
 
 //////////////////////////////////////////////////
                //  END CODE  //

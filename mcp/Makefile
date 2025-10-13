@@ -12,7 +12,7 @@ all: build
 
 # Setup cross-compilation toolchain
 setup:
-	@echo "Setting up cross-compilation for $(TARGET)..."
+	@echo "Setting up 	cross-compilation for $(TARGET)..."
 	. ~/.cargo/env && rustup target add $(TARGET)
 	sudo apt update
 	sudo apt install -y gcc-arm-linux-gnueabihf
@@ -27,13 +27,23 @@ build:
 	CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc \
 	cargo build --release --target $(TARGET)
 
-# Install binary to Raspberry Pi
+# Install binary to Raspberry Pi as systemd service
 install: build
 	@echo "Installing $(BINARY_NAME) to $(REMOTE_HOST)..."
-	ssh $(REMOTE_HOST) "killall $(BINARY_NAME) 2>/dev/null || true"
-	scp target/$(TARGET)/release/$(BINARY_NAME) $(REMOTE_HOST):~/$(BINARY_NAME)
-	ssh $(REMOTE_HOST) "chmod +x ~/$(BINARY_NAME)"
-	@echo "Installation complete. Binary available at ~/$(BINARY_NAME) on $(REMOTE_HOST)"
+	@echo "Stopping existing service if running..."
+	ssh $(REMOTE_HOST) "sudo systemctl stop $(BINARY_NAME) 2>/dev/null || true"
+	@echo "Copying binary to /usr/local/bin..."
+	scp target/$(TARGET)/release/$(BINARY_NAME) $(REMOTE_HOST):/tmp/$(BINARY_NAME)
+	ssh $(REMOTE_HOST) "sudo mv /tmp/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME) && sudo chmod +x /usr/local/bin/$(BINARY_NAME)"
+	@echo "Installing systemd service file..."
+	scp $(BINARY_NAME).service $(REMOTE_HOST):/tmp/$(BINARY_NAME).service
+	ssh $(REMOTE_HOST) "sudo mv /tmp/$(BINARY_NAME).service /etc/systemd/system/$(BINARY_NAME).service"
+	@echo "Reloading systemd and enabling service..."
+	ssh $(REMOTE_HOST) "sudo systemctl daemon-reload"
+	ssh $(REMOTE_HOST) "sudo systemctl enable $(BINARY_NAME)"
+	ssh $(REMOTE_HOST) "sudo systemctl start $(BINARY_NAME)"
+	@echo "Installation complete. Service status:"
+	ssh $(REMOTE_HOST) "sudo systemctl status $(BINARY_NAME) --no-pager"
 
 # Clean build artifacts
 clean:

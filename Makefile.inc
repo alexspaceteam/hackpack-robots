@@ -60,6 +60,7 @@ parse-ast: $(AST_FILE)
 install: $(HEX_FILE) $(MCP_MANIFEST_JSON)
 	@echo "Installing $(PROJECT) to remote host ${REMOTE_HOST}..."
 	scp $(HEX_FILE) $(REMOTE_HOST):
+	ssh $(REMOTE_HOST) mkdir -p manifests
 	@VERSION=$$(jq -r '.version' $(MCP_MANIFEST_JSON)); \
 	scp $(MCP_MANIFEST_JSON) $(REMOTE_HOST):~/manifests/$(PROJECT)-$$VERSION.json
 	ssh $(REMOTE_HOST) "killall arduino-mcp-adapter 2>/dev/null || true"

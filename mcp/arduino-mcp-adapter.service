@@ -1,0 +1,15 @@
+[Unit]
+Description=Arduino MCP Adapter Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/local/bin/arduino-mcp-adapter --line /dev/ttyUSB0 --manifest-dir /home/pi/manifests
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

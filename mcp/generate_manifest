@@ -47,23 +47,32 @@ def parse_text_ast(ast_content):
     i = 0
     while i < len(lines):
         line = lines[i]
-        
+
         # Look for FunctionDecl first
         func_match = re.search(r'FunctionDecl.*?(\w+)\s+\'([^\']+)\'', line)
         if func_match:
             func_name = func_match.group(1)
             func_type = func_match.group(2)
-            
+
+            # Determine the depth level of this FunctionDecl by counting tree markers
+            # Each level adds 2 chars: '|-' or '| ' (or '`-' or '` ' for last child)
+            func_depth = len(line) - len(line.lstrip('|` '))
+
             # Look ahead for AnnotateAttr with MCP_TOOL in the function's subtree
+            # Search until we find a node at the same or lower depth level (sibling or uncle)
             mcp_tool_desc = None
-            for j in range(i+1, min(len(lines), i+50)):
+            for j in range(i+1, len(lines)):
                 attr_line = lines[j]
+                attr_depth = len(attr_line) - len(attr_line.lstrip('|` '))
+
+                # If we've reached a node at the same or lower depth, we've left this function's subtree
+                if attr_depth <= func_depth:
+                    break
+
+                # Check if this line contains our annotation
                 if 'AnnotateAttr' in attr_line and 'MCP_TOOL:' in attr_line:
                     annotation_match = re.search(r'"MCP_TOOL:([^"]*)"', attr_line)
                     mcp_tool_desc = annotation_match.group(1) if annotation_match else "Unknown"
-                    break
-                # Stop if we hit another FunctionDecl (we've gone too far)
-                elif 'FunctionDecl' in attr_line and j != i:
                     break
             
             # Only process if we found an MCP_TOOL annotation
