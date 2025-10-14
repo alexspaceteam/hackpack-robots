@@ -219,6 +219,7 @@ void startMoveBackward() {
 }
 
 
+MCP_TOOL("Move turret backward on wheels for specified milliseconds")
 void moveBackward(int duration_ms) {
   startMoveBackward();
   delay(duration_ms);
@@ -231,6 +232,7 @@ void startMoveForward() {
   rightWheel.write(90-wheelspeed);
 }
 
+MCP_TOOL("Move turret forward on wheels for specified milliseconds")
 void moveForward(int duration_ms) {
   startMoveForward();
   delay(duration_ms);
@@ -244,6 +246,7 @@ void startTurnLeft() {
   rightWheel.write(90-wheelspeed);
 }
 
+MCP_TOOL("Turn turret left on wheels for specified milliseconds")
 void turnLeft(int duration_ms) {
   startTurnLeft();
   delay(duration_ms);
@@ -255,29 +258,34 @@ void startTurnRight() {
   rightWheel.write(90+wheelspeed);
 }
 
+MCP_TOOL("Turn turret right on wheels for specified milliseconds")
 void turnRight(int duration_ms) {
   startTurnRight();
   delay(duration_ms);
   stopWheels();
 }
 
+MCP_TOOL("Stop turret wheel movement")
 void stopWheels() {
   leftWheel.write(90);
   rightWheel.write(90);
 }
 
+MCP_TOOL("Turn laser aiming sight on")
 void turnLaserAimOn() {
   digitalWrite(laserPin, HIGH);
   laserOn = true;
   Serial.println("LASER ON");
 }
 
+MCP_TOOL("Turn laser aiming sight off")
 void turnLaserAimOff() {
   digitalWrite(laserPin, LOW);
   laserOn = false;
   Serial.println("LASER OFF");
 }
 
+MCP_TOOL("Toggle laser aiming sight on/off")
 void toggleLaserAim() {
   unsigned long currentTime = millis();
 
@@ -551,6 +559,7 @@ void handleCommand(int command) {
     }
 }
 
+MCP_TOOL("Rotate turret barrel left (yaw) by specified number of moves")
 void leftMove(int moves){ // function to move left
     for (int i = 0; i < moves; i++){
         yawServo.write(yawStopSpeed + yawMoveSpeed); // adding the servo speed = 180 (full counterclockwise rotation speed)
@@ -562,6 +571,7 @@ void leftMove(int moves){ // function to move left
 
 }
 
+MCP_TOOL("Rotate turret barrel right (yaw) by specified number of moves")
 void rightMove(int moves){ // function to move right
   for (int i = 0; i < moves; i++){
       yawServo.write(yawStopSpeed - yawMoveSpeed); //subtracting the servo speed = 0 (full clockwise rotation speed)
@@ -572,6 +582,7 @@ void rightMove(int moves){ // function to move right
   }
 }
 
+MCP_TOOL("Tilt turret barrel up (pitch) by specified number of moves")
 void upMove(int moves){ // function to tilt up
   for (int i = 0; i < moves; i++){
         if((pitchServoVal+pitchMoveSpeed) < pitchMax){ //make sure the servo is within rotation limits (less than 150 degrees by default)
@@ -583,6 +594,7 @@ void upMove(int moves){ // function to tilt up
   }
 }
 
+MCP_TOOL("Tilt turret barrel down (pitch) by specified number of moves")
 void downMove (int moves){ // function to tilt down
   for (int i = 0; i < moves; i++){
       if((pitchServoVal-pitchMoveSpeed) > pitchMin){//make sure the servo is within rotation limits (greater than 35 degrees by default)
@@ -612,6 +624,7 @@ void fireAll() { //function to fire all 6 darts at once
     Serial.println("FIRING ALL");
 }    
 
+MCP_TOOL("Reset turret barrel servos to home position")
 void homeServos(){ // sends servos to home positions
     yawServo.write(yawStopSpeed); //setup YAW servo to be STOPPED (90)
     delay(20);
