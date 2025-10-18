@@ -32,7 +32,6 @@ impl SlipDecoder {
         self.state = SlipDecodeState::Idle;
         self.buffer.clear();
     }
-    
 
     /// Process a single byte, returning Some(frame) when a complete frame is decoded
     pub fn process_byte(&mut self, byte: u8) -> Result<Option<Vec<u8>>> {
@@ -41,7 +40,10 @@ impl SlipDecoder {
         } else {
             format!("0x{:02X}", byte)
         };
-        debug!("SLIP State: {:?}, Byte: {} ({})", self.state, byte, char_display);
+        debug!(
+            "SLIP State: {:?}, Byte: {} ({})",
+            self.state, byte, char_display
+        );
         match self.state {
             SlipDecodeState::Idle => {
                 if byte == SLIP_END {
@@ -78,7 +80,10 @@ impl SlipDecoder {
                     if self.buffer.len() < 1024 {
                         // Prevent excessive memory usage
                         self.buffer.push(byte);
-                        debug!("SLIP Added data byte to buffer (buffer len: {})", self.buffer.len());
+                        debug!(
+                            "SLIP Added data byte to buffer (buffer len: {})",
+                            self.buffer.len()
+                        );
                     } else {
                         warn!("SLIP Frame too large, resetting");
                         self.reset();
@@ -127,7 +132,6 @@ impl SlipDecoder {
             }
         }
     }
-
 }
 
 /// Encode data into SLIP format

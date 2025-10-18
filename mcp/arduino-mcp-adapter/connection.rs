@@ -1,23 +1,23 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 use serialport::SerialPort;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tracing::{info, debug, error, warn};
+use tracing::{debug, error, info, warn};
 
-use crate::slip::{SlipDecoder, slip_encode};
-use crate::manifest::{Function, Manifest};
-use crate::protocol::{CommandEncoder, ResponseDecoder, decode_response_by_type};
+use crate::manifest::Function;
+use crate::protocol::{decode_response_by_type, CommandEncoder, ResponseDecoder};
+use crate::slip::{slip_encode, SlipDecoder};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RobotState {
-    Disconnected,           // No serial device found
-    Connecting,             // Found device, trying to connect
-    Connected,              // Connected but not identified
-    Initializing,           // Getting device ID
-    Ready(String),          // Ready with device ID
-    Error(String),          // Error state with description
+    Disconnected,  // No serial device found
+    Connecting,    // Found device, trying to connect
+    Connected,     // Connected but not identified
+    Initializing,  // Getting device ID
+    Ready(String), // Ready with device ID
+    Error(String), // Error state with description
 }
 
 impl RobotState {
@@ -67,7 +67,7 @@ impl ConnectionManager {
 
     pub fn check_and_update_connection(&self) -> Result<()> {
         let current_state = self.get_state();
-        
+
         // Check if serial device exists
         if !Path::new(&self.line_path).exists() {
             if !matches!(current_state, RobotState::Disconnected) {
@@ -80,7 +80,10 @@ impl ConnectionManager {
 
         match current_state {
             RobotState::Disconnected => {
-                info!("Serial device {} found, attempting connection", self.line_path);
+                info!(
+                    "Serial device {} found, attempting connection",
+                    self.line_path
+                );
                 self.set_state(RobotState::Connecting);
                 self.attempt_connection()?;
             }
@@ -115,7 +118,7 @@ impl ConnectionManager {
                 info!("Successfully opened serial port {}", self.line_path);
                 *self.port.lock().unwrap() = Some(port);
                 self.set_state(RobotState::Connected);
-                
+
                 // Start initialization process
                 self.initialize_device()?;
             }
@@ -125,30 +128,31 @@ impl ConnectionManager {
                     serialport::ErrorKind::InvalidInput => "Invalid device path".to_string(),
                     serialport::ErrorKind::Unknown => {
                         if e.to_string().contains("busy") || e.to_string().contains("in use") {
-                            "Serial port is busy - close other applications using this port".to_string()
+                            "Serial port is busy - close other applications using this port"
+                                .to_string()
                         } else {
                             format!("Connection failed: {}", e)
                         }
                     }
                     _ => format!("Serial port error: {}", e),
                 };
-                
+
                 error!("Failed to open serial port: {}", error_msg);
                 self.set_state(RobotState::Error(error_msg));
                 return Err(anyhow!("Failed to connect"));
             }
         }
-        
+
         Ok(())
     }
 
     fn initialize_device(&self) -> Result<()> {
         self.set_state(RobotState::Initializing);
-        
+
         // Wait for Arduino to initialize
         info!("Waiting 3 seconds for Arduino initialization...");
         std::thread::sleep(Duration::from_secs(3));
-        
+
         match self.get_device_id() {
             Ok(device_id) => {
                 info!("Device initialized with ID: {}", device_id);
@@ -161,77 +165,84 @@ impl ConnectionManager {
                 return Err(e);
             }
         }
-        
+
         Ok(())
     }
 
     fn get_device_id(&self) -> Result<String> {
         let mut port_guard = self.port.lock().unwrap();
-        let port = port_guard.as_mut().ok_or_else(|| anyhow!("No serial port available"))?;
-        
+        let port = port_guard
+            .as_mut()
+            .ok_or_else(|| anyhow!("No serial port available"))?;
+
         // Send deviceId command (tag=0)
         self.send_command(&mut **port, 0)?;
-        
+
         // Read device ID response
         self.read_response(&mut **port)
     }
 
     pub fn execute_function(&self, func: &Function, arguments: &Value) -> Result<String> {
         let state = self.get_state();
-        
+
         if !state.is_ready() {
             return Err(anyhow!("Robot not ready: {}", state.error_message()));
         }
 
         let mut port_guard = self.port.lock().unwrap();
-        let port = port_guard.as_mut().ok_or_else(|| anyhow!("No serial port available"))?;
+        let port = port_guard
+            .as_mut()
+            .ok_or_else(|| anyhow!("No serial port available"))?;
 
         // Encode and send command
         if func.params.is_empty() {
             self.send_command(&mut **port, func.tag)?;
         } else {
             let mut encoder = CommandEncoder::new();
-            
+
             for param in &func.params {
                 let arg_value = &arguments[&param.name];
-                
+
                 match param.param_type.as_str() {
                     "i16" => {
                         let value = arg_value.as_i64().unwrap() as i16;
                         debug!("Encoding i16 parameter '{}': {}", param.name, value);
                         encoder.write_i16(value);
-                    },
+                    }
                     "i32" => {
                         let value = arg_value.as_i64().unwrap() as i32;
                         debug!("Encoding i32 parameter '{}': {}", param.name, value);
                         encoder.write_i32(value);
-                    },
+                    }
                     "CStr" => {
                         let value = arg_value.as_str().unwrap();
                         debug!("Encoding CStr parameter '{}': '{}'", param.name, value);
                         encoder.write_cstring(value);
-                    },
+                    }
                     _ => {
                         let value = arg_value.as_str().unwrap_or("");
-                        debug!("Encoding unknown type '{}' as CStr: '{}'", param.param_type, value);
+                        debug!(
+                            "Encoding unknown type '{}' as CStr: '{}'",
+                            param.param_type, value
+                        );
                         encoder.write_cstring(value);
                     }
                 }
             }
-            
+
             let args_data = encoder.finish();
             self.send_command_with_args(&mut **port, func.tag, &args_data)?;
         }
 
         // Read and decode response
         let response_data = self.read_response_raw(&mut **port)?;
-        
+
         let response_text = if let Some(return_type) = &func.return_type {
             decode_response_by_type(&response_data, return_type)?
         } else {
             "Command executed successfully".to_string()
         };
-        
+
         debug!("Function '{}' returned: '{}'", func.name, response_text);
         Ok(response_text)
     }
@@ -244,15 +255,24 @@ impl ConnectionManager {
         self.send_command_with_args(port, tag, &[])
     }
 
-    fn send_command_with_args(&self, port: &mut dyn SerialPort, tag: u8, args_data: &[u8]) -> Result<()> {
-        debug!("Sending SLIP command with tag: {} and {} arg bytes", tag, args_data.len());
-        
+    fn send_command_with_args(
+        &self,
+        port: &mut dyn SerialPort,
+        tag: u8,
+        args_data: &[u8],
+    ) -> Result<()> {
+        debug!(
+            "Sending SLIP command with tag: {} and {} arg bytes",
+            tag,
+            args_data.len()
+        );
+
         let mut command_data = vec![tag];
         command_data.extend_from_slice(args_data);
-        
+
         let crc = self.crc8(&command_data);
         command_data.push(crc);
-        
+
         let slip_frame = slip_encode(&command_data);
         port.write_all(&slip_frame)?;
         port.flush()?;
@@ -270,39 +290,39 @@ impl ConnectionManager {
         debug!("Beginning to read SLIP response from serial port");
         let mut buffer = [0; 256];
         let mut decoder = SlipDecoder::new();
-        
+
         // Read until we get a complete SLIP frame
         loop {
             match port.read(&mut buffer) {
                 Ok(bytes_read) if bytes_read > 0 => {
                     debug!("Read {} bytes from serial", bytes_read);
-                    
+
                     // Process each byte through SLIP decoder
                     for &byte in &buffer[..bytes_read] {
                         if let Some(frame) = decoder.process_byte(byte)? {
                             debug!("Received SLIP frame: {} bytes", frame.len());
-                            
+
                             if frame.len() < 1 {
                                 return Err(anyhow!("Frame too short"));
                             }
-                            
+
                             if frame.len() == 1 {
                                 // Void function - just CRC, no data
                                 debug!("Void function response (CRC only)");
                                 return Ok(vec![]);
                             }
-                            
+
                             // Strip CRC (last byte) and return raw data
-                            let data = frame[..frame.len()-1].to_vec();
+                            let data = frame[..frame.len() - 1].to_vec();
                             return Ok(data);
                         }
                     }
-                },
+                }
                 Ok(_) => continue,
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
                     debug!("Serial read timeout");
                     continue;
-                },
+                }
                 Err(e) => {
                     let error_msg = format!("Serial read error: {}", e);
                     self.set_state(RobotState::Error(error_msg.clone()));

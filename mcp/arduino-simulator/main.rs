@@ -13,16 +13,18 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 // Re-use SLIP protocol constants and logic
-mod slip;
 mod protocol;
+mod slip;
 
-use slip::{slip_encode, SlipDecoder};
 use protocol::{crc8, decode_command, encode_response, ResponseData};
+use slip::{slip_encode, SlipDecoder};
 
 #[derive(Parser, Debug)]
 #[command(name = "arduino-simulator")]
 #[command(about = "Arduino simulator for testing MCP communication")]
-#[command(long_about = "Simulates an Arduino device by creating a PTY and implementing the MCP serial protocol")]
+#[command(
+    long_about = "Simulates an Arduino device by creating a PTY and implementing the MCP serial protocol"
+)]
 struct Args {
     #[arg(short, long, help = "Path to symlink for the PTY (e.g., /tmp/mytty)")]
     line: PathBuf,
@@ -65,12 +67,20 @@ impl PtySymlink {
         // Remove existing symlink if it exists
         if symlink_path.exists() {
             info!("Removing existing symlink at {}", symlink_path.display());
-            fs::remove_file(&symlink_path)
-                .with_context(|| format!("Failed to remove existing symlink: {}", symlink_path.display()))?;
+            fs::remove_file(&symlink_path).with_context(|| {
+                format!(
+                    "Failed to remove existing symlink: {}",
+                    symlink_path.display()
+                )
+            })?;
         }
 
         // Create new symlink
-        info!("Creating symlink {} -> {}", symlink_path.display(), target_path.display());
+        info!(
+            "Creating symlink {} -> {}",
+            symlink_path.display(),
+            target_path.display()
+        );
         unix_fs::symlink(target_path, &symlink_path)
             .with_context(|| format!("Failed to create symlink: {}", symlink_path.display()))?;
 
@@ -100,20 +110,26 @@ struct Simulator {
 impl Simulator {
     fn new(args: Args) -> Result<Self> {
         // Load manifest
-        let manifest_content = fs::read_to_string(&args.manifest)
-            .with_context(|| format!("Failed to read manifest file: {}", args.manifest.display()))?;
+        let manifest_content = fs::read_to_string(&args.manifest).with_context(|| {
+            format!("Failed to read manifest file: {}", args.manifest.display())
+        })?;
 
-        let manifest: Manifest = serde_json::from_str(&manifest_content)
-            .with_context(|| format!("Failed to parse manifest file: {}", args.manifest.display()))?;
+        let manifest: Manifest = serde_json::from_str(&manifest_content).with_context(|| {
+            format!("Failed to parse manifest file: {}", args.manifest.display())
+        })?;
 
         // Derive device ID from manifest filename (without .json extension)
-        let device_id = args.manifest
+        let device_id = args
+            .manifest
             .file_stem()
             .and_then(|s| s.to_str())
             .ok_or_else(|| anyhow!("Invalid manifest filename"))?
             .to_string();
 
-        info!("Loaded manifest: {} ({})", manifest.name, manifest.description);
+        info!(
+            "Loaded manifest: {} ({})",
+            manifest.name, manifest.description
+        );
         info!("Device ID: {}", device_id);
         info!("Functions defined: {}", manifest.functions.len());
 
@@ -121,15 +137,22 @@ impl Simulator {
             let params_str = if func.params.is_empty() {
                 "()".to_string()
             } else {
-                let params: Vec<String> = func.params.iter()
+                let params: Vec<String> = func
+                    .params
+                    .iter()
                     .map(|p| format!("{}: {}", p.name, p.param_type))
                     .collect();
                 format!("({})", params.join(", "))
             };
-            let return_str = func.return_type.as_ref()
+            let return_str = func
+                .return_type
+                .as_ref()
                 .map(|t| format!(" -> {}", t))
                 .unwrap_or_default();
-            info!("  [{}] {}{}{} - {}", func.tag, func.name, params_str, return_str, func.desc);
+            info!(
+                "  [{}] {}{}{} - {}",
+                func.tag, func.name, params_str, return_str, func.desc
+            );
         }
 
         // Create PTY with non-blocking mode for graceful shutdown
@@ -139,8 +162,7 @@ impl Simulator {
         grantpt(&pty_master).context("Failed to grant PTY")?;
         unlockpt(&pty_master).context("Failed to unlock PTY")?;
 
-        let slave_name = unsafe { ptsname(&pty_master) }
-            .context("Failed to get PTY slave name")?;
+        let slave_name = unsafe { ptsname(&pty_master) }.context("Failed to get PTY slave name")?;
 
         info!("PTY master created");
         info!("PTY slave: {}", slave_name);
@@ -162,7 +184,11 @@ impl Simulator {
         // Decode command frame (tag + args + CRC)
         let (tag, args) = decode_command(frame)?;
 
-        debug!("Received command - Tag: {}, Args: {} bytes", tag, args.len());
+        debug!(
+            "Received command - Tag: {}, Args: {} bytes",
+            tag,
+            args.len()
+        );
 
         // Handle tag 0 (deviceId) specially
         if tag == 0 {
@@ -172,7 +198,10 @@ impl Simulator {
         }
 
         // Find function in manifest
-        let func = self.manifest.functions.iter()
+        let func = self
+            .manifest
+            .functions
+            .iter()
             .find(|f| f.tag == tag)
             .ok_or_else(|| {
                 warn!("Unknown function tag: {}", tag);
@@ -186,7 +215,10 @@ impl Simulator {
         let args_display = if func.params.is_empty() {
             String::new()
         } else {
-            let args_str: Vec<String> = func.params.iter().zip(parsed_args.iter())
+            let args_str: Vec<String> = func
+                .params
+                .iter()
+                .zip(parsed_args.iter())
                 .map(|(p, v)| format!("{}={}", p.name, v))
                 .collect();
             args_str.join(", ")
@@ -248,7 +280,9 @@ impl Simulator {
                     offset += 4;
                 }
                 "CStr" => {
-                    let end = args[offset..].iter().position(|&b| b == 0)
+                    let end = args[offset..]
+                        .iter()
+                        .position(|&b| b == 0)
                         .map(|p| offset + p)
                         .unwrap_or(args.len());
                     let s = String::from_utf8_lossy(&args[offset..end]).to_string();
@@ -278,8 +312,7 @@ impl Simulator {
 
     fn write_to_pty(&mut self, data: &[u8]) -> Result<()> {
         let fd = self.pty_master.as_raw_fd();
-        nix::unistd::write(fd, data)
-            .context("Failed to write to PTY")?;
+        nix::unistd::write(fd, data).context("Failed to write to PTY")?;
         Ok(())
     }
 
@@ -334,10 +367,12 @@ impl Simulator {
                                     Err(e) => {
                                         if e.to_string().contains("Unknown function tag") {
                                             error!("Dispatch error: {}", e);
-                                            let _ = self.send_error_response(0x02); // Dispatch error
+                                            let _ = self.send_error_response(0x02);
+                                        // Dispatch error
                                         } else {
                                             error!("CRC or protocol error: {}", e);
-                                            let _ = self.send_error_response(0x01); // CRC mismatch
+                                            let _ = self.send_error_response(0x01);
+                                            // CRC mismatch
                                         }
                                     }
                                 }
@@ -398,7 +433,10 @@ fn main() -> Result<()> {
 
     // Validate arguments
     if !args.manifest.exists() {
-        return Err(anyhow!("Manifest file does not exist: {}", args.manifest.display()));
+        return Err(anyhow!(
+            "Manifest file does not exist: {}",
+            args.manifest.display()
+        ));
     }
 
     let mut simulator = Simulator::new(args)?;
@@ -410,7 +448,8 @@ fn main() -> Result<()> {
     ctrlc::set_handler(move || {
         info!("Received Ctrl+C, shutting down...");
         r.store(false, Ordering::Relaxed);
-    }).context("Failed to set Ctrl+C handler")?;
+    })
+    .context("Failed to set Ctrl+C handler")?;
 
     // Run simulator
     simulator.run(running)?;

@@ -47,7 +47,10 @@ pub fn decode_command(frame: &[u8]) -> Result<(u8, &[u8])> {
     // Validate CRC
     let calculated_crc = crc8(data);
     if calculated_crc != received_crc {
-        debug!("CRC mismatch: calculated=0x{:02X}, received=0x{:02X}", calculated_crc, received_crc);
+        debug!(
+            "CRC mismatch: calculated=0x{:02X}, received=0x{:02X}",
+            calculated_crc, received_crc
+        );
         return Err(anyhow!("CRC mismatch"));
     }
 
@@ -84,7 +87,11 @@ pub fn encode_response(response_data: &ResponseData) -> Result<Vec<u8>> {
     let crc = crc8(&frame);
     frame.push(crc);
 
-    debug!("Response encoded: {} bytes (CRC: 0x{:02X})", frame.len(), crc);
+    debug!(
+        "Response encoded: {} bytes (CRC: 0x{:02X})",
+        frame.len(),
+        crc
+    );
 
     Ok(frame)
 }
@@ -114,7 +121,7 @@ mod tests {
         let response = encode_response(&ResponseData::I16(42)).unwrap();
         assert_eq!(response.len(), 3); // 2 bytes + CRC
         assert_eq!(response[0], 42); // Little-endian low byte
-        assert_eq!(response[1], 0);  // Little-endian high byte
+        assert_eq!(response[1], 0); // Little-endian high byte
     }
 
     #[test]

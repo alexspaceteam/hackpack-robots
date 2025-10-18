@@ -628,17 +628,6 @@ impl McpServer {
         Self::json_response(body)
     }
 
-    fn empty_response() -> Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
-        Response::builder()
-            .status(StatusCode::OK)
-            .header("Content-Type", "application/json")
-            .header("Access-Control-Allow-Origin", "*")
-            .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            .header("Access-Control-Allow-Headers", "Content-Type")
-            .body(BoxBody::new(Full::new("{}".into()).map_err(|e| match e {})))
-            .unwrap()
-    }
-
     fn sse_stream_response() -> Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
         use tokio_stream::wrappers::ReceiverStream;
 
