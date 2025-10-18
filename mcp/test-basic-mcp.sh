@@ -5,7 +5,7 @@ set -e
 source "$(dirname "$0")/test-common.sh"
 
 echo "======================================"
-echo "Test: End-to-End MCP Communication"
+echo "Test: Basic MCP Communication"
 echo "======================================"
 echo ""
 
@@ -191,7 +191,7 @@ fi
 
 echo ""
 echo "======================================"
-echo "✓ All E2E MCP tests passed!"
+echo "✓ All basic MCP tests passed!"
 echo "======================================"
 
 # Normal completion - clean temp files and exit

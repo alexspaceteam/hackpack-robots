@@ -6,7 +6,7 @@ REMOTE_HOST = pi
 BINARY_NAME = arduino-mcp-adapter
 SIMULATOR_NAME = arduino-simulator
 
-.PHONY: setup build build-adapter build-adapter-pi build-simulator install clean run-simulator test-connection test test-unit test-reconnect test-e2e
+.PHONY: setup build build-adapter build-adapter-pi build-simulator install clean run-simulator test-connection test test-unit test-reconnect test-basic test-python
 
 # Default target - build all three binaries
 all: build
@@ -75,7 +75,7 @@ run-simulator:
 	. ~/.cargo/env && cargo run --bin $(SIMULATOR_NAME)
 
 # Run all tests
-test: test-unit test-reconnect test-e2e
+test: test-unit test-reconnect test-basic test-python
 	@echo ""
 	@echo "======================================"
 	@echo "✓ All tests passed!"
@@ -92,8 +92,14 @@ test-reconnect: build-simulator
 	@echo "Running reconnection tests..."
 	@./test-reconnect.sh
 
-# Test end-to-end MCP communication
-test-e2e: build-adapter build-simulator
+# Test basic MCP communication
+test-basic: build-adapter build-simulator
 	@echo ""
-	@echo "Running E2E MCP tests..."
-	@./test-e2e-mcp.sh
+	@echo "Running basic MCP tests..."
+	@./test-basic-mcp.sh
+
+# Test Python script execution
+test-python: build-adapter build-simulator
+	@echo ""
+	@echo "Running Python script execution tests..."
+	@./test-python-mcp.sh

@@ -1,16 +1,17 @@
 use anyhow::Result;
+use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Request, Response, Method, StatusCode};
-use http_body_util::{combinators::BoxBody, BodyExt, Full};
+use hyper::{Method, Request, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tracing::{info, debug, error};
+use tracing::{debug, error, info};
 
-use crate::connection::{ConnectionManager, RobotState};
-use crate::manifest::{ManifestManager, Tool};
+use crate::connection::ConnectionManager;
+use crate::manifest::{Manifest, ManifestManager, Tool};
+use crate::python_runner;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct McpRequest {
@@ -41,7 +42,10 @@ pub struct McpServer {
 }
 
 impl McpServer {
-    pub fn new(connection_manager: Arc<ConnectionManager>, manifest_manager: Arc<ManifestManager>) -> Self {
+    pub fn new(
+        connection_manager: Arc<ConnectionManager>,
+        manifest_manager: Arc<ManifestManager>,
+    ) -> Self {
         Self {
             connection_manager,
             manifest_manager,
@@ -50,6 +54,7 @@ impl McpServer {
 
     pub async fn start(&self, port: u16) -> Result<()> {
         let addr = format!("0.0.0.0:{}", port);
+        let base_url = Arc::new(format!("http://127.0.0.1:{}/mcp", port));
         let listener = TcpListener::bind(&addr).await?;
         info!("MCP HTTP server listening on {}", addr);
 
@@ -69,13 +74,22 @@ impl McpServer {
             let (stream, _) = listener.accept().await?;
             let connection_manager = Arc::clone(&self.connection_manager);
             let manifest_manager = Arc::clone(&self.manifest_manager);
+            let base_url = Arc::clone(&base_url);
 
             tokio::spawn(async move {
                 let io = hyper_util::rt::TokioIo::new(stream);
                 if let Err(err) = http1::Builder::new()
-                    .serve_connection(io, service_fn(move |req| {
-                        Self::handle_request(req, Arc::clone(&connection_manager), Arc::clone(&manifest_manager))
-                    }))
+                    .serve_connection(
+                        io,
+                        service_fn(move |req| {
+                            Self::handle_request(
+                                req,
+                                Arc::clone(&connection_manager),
+                                Arc::clone(&manifest_manager),
+                                Arc::clone(&base_url),
+                            )
+                        }),
+                    )
                     .await
                 {
                     error!("Connection error: {}", err);
@@ -88,29 +102,25 @@ impl McpServer {
         req: Request<hyper::body::Incoming>,
         connection_manager: Arc<ConnectionManager>,
         manifest_manager: Arc<ManifestManager>,
+        base_url: Arc<String>,
     ) -> Result<Response<BoxBody<hyper::body::Bytes, hyper::Error>>, hyper::Error> {
-        
         let response = match req.method() {
-            &Method::POST => {
-                match req.uri().path() {
-                    "/mcp" => Self::handle_mcp_post(req, connection_manager, manifest_manager).await,
-                    "/status" => Self::handle_status(connection_manager).await,
-                    _ => Ok(Self::not_found_response()),
+            &Method::POST => match req.uri().path() {
+                "/mcp" => {
+                    Self::handle_mcp_post(req, connection_manager, manifest_manager, base_url).await
                 }
-            }
-            &Method::GET => {
-                match req.uri().path() {
-                    "/status" => Self::handle_status(connection_manager).await,
-                    "/health" => Ok(Self::health_response()),
-                    _ => Ok(Self::not_found_response()),
-                }
-            }
-            &Method::OPTIONS => {
-                Ok(Self::cors_response())
-            }
+                "/status" => Self::handle_status(connection_manager).await,
+                _ => Ok(Self::not_found_response()),
+            },
+            &Method::GET => match req.uri().path() {
+                "/status" => Self::handle_status(connection_manager).await,
+                "/health" => Ok(Self::health_response()),
+                _ => Ok(Self::not_found_response()),
+            },
+            &Method::OPTIONS => Ok(Self::cors_response()),
             _ => Ok(Self::not_found_response()),
         };
-        
+
         response
     }
 
@@ -118,14 +128,14 @@ impl McpServer {
         req: Request<hyper::body::Incoming>,
         connection_manager: Arc<ConnectionManager>,
         manifest_manager: Arc<ManifestManager>,
+        base_url: Arc<String>,
     ) -> Result<Response<BoxBody<hyper::body::Bytes, hyper::Error>>, hyper::Error> {
-
         let headers = req.headers().clone();
         let body_bytes = req.collect().await?.to_bytes();
         let body_str = String::from_utf8_lossy(&body_bytes);
 
         debug!("Received MCP request: {}", body_str);
-        
+
         let request: McpRequest = match serde_json::from_str(&body_str) {
             Ok(req) => req,
             Err(e) => {
@@ -137,7 +147,7 @@ impl McpServer {
                 return Ok(Self::error_response(-32700, &detailed_error));
             }
         };
-        
+
         let response = match request.method.as_str() {
             "initialize" => Self::handle_initialize(&request).await,
             "notifications/initialized" => {
@@ -148,25 +158,28 @@ impl McpServer {
                 // Return SSE stream that stays open
                 return Ok(Self::sse_stream_response());
             }
-            "tools/list" => Self::handle_tools_list(&request, &connection_manager, &manifest_manager).await,
-            "tools/call" => Self::handle_tools_call(&request, &connection_manager, &manifest_manager).await,
-            _ => {
-                McpResponse {
-                    jsonrpc: "2.0".to_string(),
-                    id: request.id,
-                    result: None,
-                    error: Some(McpError {
-                        code: -32601,
-                        message: "Method not found".to_string(),
-                        data: None,
-                    }),
-                }
+            "tools/list" => {
+                Self::handle_tools_list(&request, &connection_manager, &manifest_manager).await
             }
+            "tools/call" => {
+                Self::handle_tools_call(&request, &connection_manager, &manifest_manager, &base_url)
+                    .await
+            }
+            _ => McpResponse {
+                jsonrpc: "2.0".to_string(),
+                id: request.id,
+                result: None,
+                error: Some(McpError {
+                    code: -32601,
+                    message: "Method not found".to_string(),
+                    data: None,
+                }),
+            },
         };
-        
+
         let response_json = serde_json::to_string(&response).unwrap();
         debug!("Sending MCP response: {}", response_json);
-        
+
         Ok(Self::json_response(response_json))
     }
 
@@ -174,14 +187,14 @@ impl McpServer {
         connection_manager: Arc<ConnectionManager>,
     ) -> Result<Response<BoxBody<hyper::body::Bytes, hyper::Error>>, hyper::Error> {
         let state = connection_manager.get_state();
-        
+
         let status = serde_json::json!({
             "state": format!("{:?}", state),
             "message": state.error_message(),
             "device_id": state.device_id(),
             "ready": state.is_ready()
         });
-        
+
         Ok(Self::json_response(serde_json::to_string(&status).unwrap()))
     }
 
@@ -196,7 +209,7 @@ impl McpServer {
                 "version": "0.1.0"
             }
         });
-        
+
         McpResponse {
             jsonrpc: "2.0".to_string(),
             id: _request.id.clone(),
@@ -206,43 +219,40 @@ impl McpServer {
     }
 
     async fn handle_tools_list(
-        _request: &McpRequest, 
+        _request: &McpRequest,
         connection_manager: &Arc<ConnectionManager>,
-        manifest_manager: &Arc<ManifestManager>
+        manifest_manager: &Arc<ManifestManager>,
     ) -> McpResponse {
         let state = connection_manager.get_state();
-        
+
         match state.device_id() {
-            Some(device_id) => {
-                match manifest_manager.get_manifest(device_id) {
-                    Ok(manifest) => {
-                        let tools = manifest_manager.create_tools_list(&manifest);
-                        
-                        let result = serde_json::json!({
-                            "tools": tools
-                        });
-                        
-                        McpResponse {
-                            jsonrpc: "2.0".to_string(),
-                            id: _request.id.clone(),
-                            result: Some(result),
-                            error: None,
-                        }
-                    }
-                    Err(e) => {
-                        McpResponse {
-                            jsonrpc: "2.0".to_string(),
-                            id: _request.id.clone(),
-                            result: None,
-                            error: Some(McpError {
-                                code: -32603,
-                                message: format!("Failed to load manifest: {}", e),
-                                data: None,
-                            }),
-                        }
+            Some(device_id) => match manifest_manager.get_manifest(device_id) {
+                Ok(manifest) => {
+                    let mut tools = manifest_manager.create_tools_list(&manifest);
+                    tools.push(Self::python_runner_tool());
+
+                    let result = serde_json::json!({
+                        "tools": tools
+                    });
+
+                    McpResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: _request.id.clone(),
+                        result: Some(result),
+                        error: None,
                     }
                 }
-            }
+                Err(e) => McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: _request.id.clone(),
+                    result: None,
+                    error: Some(McpError {
+                        code: -32603,
+                        message: format!("Failed to load manifest: {}", e),
+                        data: None,
+                    }),
+                },
+            },
             None => {
                 // Return empty tools list with status info
                 let result = serde_json::json!({
@@ -252,7 +262,7 @@ impl McpServer {
                         "message": state.error_message()
                     }
                 });
-                
+
                 McpResponse {
                     jsonrpc: "2.0".to_string(),
                     id: _request.id.clone(),
@@ -267,8 +277,8 @@ impl McpServer {
         request: &McpRequest,
         connection_manager: &Arc<ConnectionManager>,
         manifest_manager: &Arc<ManifestManager>,
+        base_url: &Arc<String>,
     ) -> McpResponse {
-        
         let params = match request.params.as_ref() {
             Some(p) => p,
             None => {
@@ -284,7 +294,7 @@ impl McpServer {
                 };
             }
         };
-        
+
         let tool_name = match params["name"].as_str() {
             Some(name) => name,
             None => {
@@ -300,10 +310,10 @@ impl McpServer {
                 };
             }
         };
-        
+
         let empty_args = serde_json::json!({});
         let arguments = params.get("arguments").unwrap_or(&empty_args);
-        
+
         // Check robot state first
         let state = connection_manager.get_state();
         if !state.is_ready() {
@@ -323,7 +333,7 @@ impl McpServer {
         }
 
         let device_id = state.device_id().unwrap(); // Safe because state.is_ready()
-        
+
         // Get manifest and find function
         let manifest = match manifest_manager.get_manifest(device_id) {
             Ok(m) => m,
@@ -340,7 +350,11 @@ impl McpServer {
                 };
             }
         };
-        
+
+        if tool_name == "runPythonScript" {
+            return Self::handle_run_python_script(request, arguments, &manifest, base_url).await;
+        }
+
         let func = match manifest.functions.iter().find(|f| f.name == tool_name) {
             Some(f) => f,
             None => {
@@ -356,7 +370,7 @@ impl McpServer {
                 };
             }
         };
-        
+
         // Validate arguments
         if let Err(e) = manifest_manager.validate_function_arguments(func, arguments) {
             return McpResponse {
@@ -370,7 +384,7 @@ impl McpServer {
                 }),
             };
         }
-        
+
         // Execute the function
         match connection_manager.execute_function(func, arguments) {
             Ok(response_text) => {
@@ -382,7 +396,7 @@ impl McpServer {
                         }
                     ]
                 });
-                
+
                 McpResponse {
                     jsonrpc: "2.0".to_string(),
                     id: request.id.clone(),
@@ -390,21 +404,171 @@ impl McpServer {
                     error: None,
                 }
             }
-            Err(e) => {
+            Err(e) => McpResponse {
+                jsonrpc: "2.0".to_string(),
+                id: request.id.clone(),
+                result: None,
+                error: Some(McpError {
+                    code: -32603,
+                    message: format!("Execution error: {}", e),
+                    data: Some(serde_json::json!({
+                        "robot_state": format!("{:?}", connection_manager.get_state()),
+                        "suggestion": "Check robot connection and try again"
+                    })),
+                }),
+            },
+        }
+    }
+
+    async fn handle_run_python_script(
+        request: &McpRequest,
+        arguments: &Value,
+        manifest: &Manifest,
+        base_url: &Arc<String>,
+    ) -> McpResponse {
+        let script_value = match arguments.get("script") {
+            Some(value) => value,
+            None => {
+                return McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id.clone(),
+                    result: None,
+                    error: Some(McpError {
+                        code: -32602,
+                        message: "Missing required parameter 'script' for runPythonScript"
+                            .to_string(),
+                        data: None,
+                    }),
+                };
+            }
+        };
+
+        let script = match script_value.as_str() {
+            Some(value) => value,
+            None => {
+                return McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id.clone(),
+                    result: None,
+                    error: Some(McpError {
+                        code: -32602,
+                        message: "Parameter 'script' must be a string".to_string(),
+                        data: None,
+                    }),
+                };
+            }
+        };
+
+        let timeout_secs = match arguments.get("timeout") {
+            Some(value) => {
+                if let Some(num) = value.as_u64() {
+                    if num == 0 {
+                        return McpResponse {
+                            jsonrpc: "2.0".to_string(),
+                            id: request.id.clone(),
+                            result: None,
+                            error: Some(McpError {
+                                code: -32602,
+                                message: "Parameter 'timeout' must be greater than 0 seconds"
+                                    .to_string(),
+                                data: None,
+                            }),
+                        };
+                    }
+                    if num > 300 {
+                        return McpResponse {
+                            jsonrpc: "2.0".to_string(),
+                            id: request.id.clone(),
+                            result: None,
+                            error: Some(McpError {
+                                code: -32602,
+                                message: "Parameter 'timeout' cannot exceed 300 seconds"
+                                    .to_string(),
+                                data: None,
+                            }),
+                        };
+                    }
+                    num
+                } else {
+                    return McpResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id.clone(),
+                        result: None,
+                        error: Some(McpError {
+                            code: -32602,
+                            message: "Parameter 'timeout' must be an integer number of seconds"
+                                .to_string(),
+                            data: None,
+                        }),
+                    };
+                }
+            }
+            None => 60,
+        };
+
+        let mut tool_names: Vec<String> =
+            manifest.functions.iter().map(|f| f.name.clone()).collect();
+        if !tool_names.iter().any(|name| name == "runPythonScript") {
+            tool_names.push("runPythonScript".to_string());
+        }
+
+        match python_runner::run_python_script(script, timeout_secs, &tool_names, base_url.as_str())
+            .await
+        {
+            Ok(output) => {
+                let result = serde_json::json!({
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": output
+                        }
+                    ]
+                });
+
+                McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id.clone(),
+                    result: Some(result),
+                    error: None,
+                }
+            }
+            Err(err) => {
+                error!("runPythonScript failed: {}", err);
                 McpResponse {
                     jsonrpc: "2.0".to_string(),
                     id: request.id.clone(),
                     result: None,
                     error: Some(McpError {
                         code: -32603,
-                        message: format!("Execution error: {}", e),
-                        data: Some(serde_json::json!({
-                            "robot_state": format!("{:?}", connection_manager.get_state()),
-                            "suggestion": "Check robot connection and try again"
-                        })),
+                        message: format!("Failed to execute Python script: {}", err),
+                        data: None,
                     }),
                 }
             }
+        }
+    }
+
+    fn python_runner_tool() -> Tool {
+        Tool {
+            name: "runPythonScript".to_string(),
+            description: "Execute a Python 3 script with access to the robot tools namespace. Use this when you need loops, conditionals, or batching before invoking MCP tools. Inside the script call other tools as `tools.FUNCNAME(arg=value, ...)`. The combined console output is returned as text.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "script": {
+                        "type": "string",
+                        "description": "Python 3 source code to execute. Use the provided `tools` namespace to call MCP functions."
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 300,
+                        "default": 60,
+                        "description": "Optional timeout in seconds (default 60, maximum 300)."
+                    }
+                },
+                "required": ["script"]
+            }),
         }
     }
 
@@ -430,7 +594,9 @@ impl McpServer {
     fn not_found_response() -> Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
         Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body(BoxBody::new(Full::new("Not Found".into()).map_err(|e| match e {})))
+            .body(BoxBody::new(
+                Full::new("Not Found".into()).map_err(|e| match e {}),
+            ))
             .unwrap()
     }
 
@@ -443,7 +609,10 @@ impl McpServer {
         Self::json_response(serde_json::to_string(&health).unwrap())
     }
 
-    fn error_response(code: i32, message: &str) -> Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
+    fn error_response(
+        code: i32,
+        message: &str,
+    ) -> Response<BoxBody<hyper::body::Bytes, hyper::Error>> {
         let error = McpResponse {
             jsonrpc: "2.0".to_string(),
             id: None,
@@ -474,12 +643,14 @@ impl McpServer {
         use tokio_stream::wrappers::ReceiverStream;
 
         // Create a channel and spawn a task to keep the sender alive indefinitely
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<hyper::body::Frame<hyper::body::Bytes>, hyper::Error>>(1);
+        let (tx, rx) = tokio::sync::mpsc::channel::<
+            Result<hyper::body::Frame<hyper::body::Bytes>, hyper::Error>,
+        >(1);
 
         // Spawn a task that holds the sender forever, keeping the stream alive
         tokio::spawn(async move {
             let _tx = tx; // Keep sender alive
-            // Sleep forever - this keeps the connection open
+                          // Sleep forever - this keeps the connection open
             std::future::pending::<()>().await;
         });
 

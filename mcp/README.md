@@ -39,6 +39,12 @@ MCP_TOOL("Blink the LED n times")
 void blinkNTimes(int n) { ... }
 ```
 
+### Python Automation Tool
+
+When the adapter detects a connected robot it also exposes a `runPythonScript` MCP tool. This executes a Python 3 script server-side with a `tools` namespace, letting you loop, branch, or batch calls before reaching the robot. This is done such that LLM/AI Agent can use it when there's a need a bit of computation or coordination instead of issuing single tool calls one-by-one; the adapter returns the combined console output.
+
+Inside your script call any robot function as `tools.FUNCNAME(argname=value, ...)`. Every trampoline forwards through the MCP HTTP endpoint so calls are logged just like direct invocations. Scripts default to a 60 second timeout (configurable up to 300 seconds) to guard long-running automation.
+
 ### Architecture
 
 ```
