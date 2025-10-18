@@ -194,7 +194,12 @@ mod tests {
         let mut decoder = SlipDecoder::new();
         let input = vec![SLIP_END, 0x01, 0x02, 0x03, SLIP_END];
 
-        let frames = decoder.process_bytes(&input).unwrap();
+        let mut frames = Vec::new();
+        for &byte in &input {
+            if let Some(frame) = decoder.process_byte(byte).unwrap() {
+                frames.push(frame);
+            }
+        }
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0], vec![0x01, 0x02, 0x03]);
     }
@@ -214,7 +219,12 @@ mod tests {
             SLIP_END,
         ];
 
-        let frames = decoder.process_bytes(&input).unwrap();
+        let mut frames = Vec::new();
+        for &byte in &input {
+            if let Some(frame) = decoder.process_byte(byte).unwrap() {
+                frames.push(frame);
+            }
+        }
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0], vec![0x01, SLIP_END, 0x03, SLIP_ESC, 0x05]);
     }
@@ -225,7 +235,12 @@ mod tests {
         let encoded = slip_encode(&original);
 
         let mut decoder = SlipDecoder::new();
-        let frames = decoder.process_bytes(&encoded).unwrap();
+        let mut frames = Vec::new();
+        for &byte in &encoded {
+            if let Some(frame) = decoder.process_byte(byte).unwrap() {
+                frames.push(frame);
+            }
+        }
 
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0], original);

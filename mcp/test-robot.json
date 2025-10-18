@@ -1,0 +1,68 @@
+{
+  "name": "test-robot",
+  "description": "Test robot for simulator verification",
+  "version": "test123",
+  "functions": [
+    {
+      "tag": 0,
+      "name": "deviceId",
+      "desc": "Get unique device identifier",
+      "return": "CStr",
+      "params": []
+    },
+    {
+      "tag": 1,
+      "name": "blinkLED",
+      "desc": "Blink the LED n times",
+      "return": null,
+      "params": [
+        {
+          "name": "n",
+          "type": "i16"
+        }
+      ]
+    },
+    {
+      "tag": 2,
+      "name": "setMotorSpeed",
+      "desc": "Set motor speed and direction",
+      "return": null,
+      "params": [
+        {
+          "name": "speed",
+          "type": "i16"
+        },
+        {
+          "name": "direction",
+          "type": "i16"
+        }
+      ]
+    },
+    {
+      "tag": 3,
+      "name": "getTemperature",
+      "desc": "Get current temperature reading",
+      "return": "i16",
+      "params": []
+    },
+    {
+      "tag": 4,
+      "name": "getSensorValue",
+      "desc": "Get sensor value by ID",
+      "return": "i32",
+      "params": [
+        {
+          "name": "sensorId",
+          "type": "i16"
+        }
+      ]
+    },
+    {
+      "tag": 5,
+      "name": "getStatus",
+      "desc": "Get status message",
+      "return": "CStr",
+      "params": []
+    }
+  ]
+}

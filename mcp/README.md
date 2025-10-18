@@ -872,34 +872,93 @@ make install  # Builds and deploys to Pi via SSH
 
 Service configuration: [arduino-mcp-adapter.service](arduino-mcp-adapter.service:1)
 
-## Simulator Implementation Guide
+## Arduino Simulator
 
-When implementing the `arduino-simulator`, focus on:
+The `arduino-simulator` is a testing tool that emulates an Arduino device without physical hardware. It creates a virtual serial device (PTY) and implements the complete MCP serial protocol, making it invaluable for:
 
-1. **SLIP Framing**: Correctly encode/decode SLIP frames
-2. **CRC Validation**: Implement identical CRC-8 algorithm
-3. **Little-Endian Encoding**: Match byte order for integers
-4. **deviceId() Support**: Respond to tag 0 with a configurable device identifier string
-5. **Error Responses**: Send proper error frames for invalid requests
-6. **State Management**: Track function state between calls
-7. **Timing Behavior**: Optional: simulate processing delays
+- Testing the MCP adapter without Arduino hardware
+- Developing and debugging MCP client applications
+- Validating protocol implementations
+- CI/CD integration testing
+- Learning how the MCP protocol works
 
-**Note**: The simulator should accept a device ID as a command-line parameter and respond with it when tag 0 is received, mimicking how the real Arduino's generated `deviceId()` function works.
+### Features
 
-The simulator does not need to:
-- Implement actual hardware control
-- Handle serial port intricacies (can use stdin/stdout or TCP)
-- Match Arduino memory constraints
+✅ **Full Protocol Implementation**
+- Complete SLIP framing (encode/decode with escape sequences)
+- CRC-8-CCITT checksum validation
+- Little-endian integer encoding
+- Error response handling (CRC errors, unknown tags)
 
-Key testing scenarios:
-- Device identification (tag 0)
-- Void functions (no return value)
-- Integer parameters and returns (i16, i32)
-- String parameters and returns (CStr)
-- Multi-parameter functions
-- Invalid tags (error response)
-- CRC errors (error response)
-- SLIP escape sequences in data
+✅ **PTY-Based Virtual Device**
+- Creates real pseudoterminal device
+- Automatic symlink management with cleanup
+- Works seamlessly with adapter's serial port code
+- **Reconnection support**: Handles adapter disconnect/reconnect gracefully
+
+✅ **Manifest-Driven Behavior**
+- Loads function definitions from JSON manifest
+- Returns appropriate stub values (0 for integers, "" for strings, void for void)
+- Derives device ID from manifest filename
+
+✅ **Comprehensive Logging**
+- Logs all function calls with parameters
+- Shows SLIP frame processing
+- Displays CRC validation results
+- Debug output for protocol troubleshooting
+
+### Building the Simulator
+
+```bash
+# Build for host machine
+cd mcp/
+make build-simulator
+
+# Or use cargo directly
+cargo build --release --bin arduino-simulator
+```
+
+The simulator binary will be at `target/release/arduino-simulator`.
+
+### Usage
+
+```bash
+arduino-simulator --line <PATH> --manifest <JSON_FILE>
+```
+
+**Arguments:**
+- `--line PATH` - Path where symlink to PTY will be created (e.g., `/tmp/my-robot`)
+- `--manifest PATH` - Path to JSON manifest file describing robot functions
+
+**Example:**
+
+```bash
+# Run simulator with test robot
+./target/release/arduino-simulator \
+  --line /tmp/test-robot \
+  --manifest manifests/test-robot.json
+```
+
+The simulator will:
+1. Load the manifest and display all available functions
+2. Derive device ID from manifest filename (`test-robot.json` → `"test-robot"`)
+3. Create a PTY and symlink it to `/tmp/test-robot`
+4. Wait for commands from the adapter
+5. Log all function calls to console
+6. Return stub values for all functions
+
+### Testing
+
+Run the test suite to verify e2e functionality using the simulator.
+
+```bash
+# Run all tests
+make test
+
+# Run individual tests
+make test-reconnect  # Test reconnection handling
+make test-e2e        # Test end-to-end MCP communication
+```
 
 ## Quick Reference
 
@@ -948,9 +1007,23 @@ make build-adapter
 # Build adapter for Pi
 make build-adapter-pi
 
-# Run adapter
+# Build simulator
+make build-simulator
+
+# Run adapter (with real Arduino)
 ./target/release/arduino-mcp-adapter \
   --line /dev/ttyUSB0 \
+  --manifest-dir ./manifests \
+  --port 8080
+
+# Run simulator (for testing without hardware)
+./target/release/arduino-simulator \
+  --line /tmp/test-robot \
+  --manifest test-robot.json
+
+# Run adapter with simulator
+./target/release/arduino-mcp-adapter \
+  --line /tmp/test-robot \
   --manifest-dir ./manifests \
   --port 8080
 ```

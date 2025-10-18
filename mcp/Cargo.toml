@@ -24,3 +24,5 @@ hyper = { version = "1.0", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 tokio-stream = "0.1.17"
+nix = { version = "0.27", features = ["fs", "ioctl", "term"] }
+ctrlc = "3.4"
