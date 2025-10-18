@@ -5,7 +5,11 @@ edition = "2021"
 
 [[bin]]
 name = "arduino-mcp-adapter"
-path = "src/main.rs"
+path = "arduino-mcp-adapter/main.rs"
+
+[[bin]]
+name = "arduino-simulator"
+path = "arduino-simulator/main.rs"
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }

@@ -1,34 +1,48 @@
-# Makefile for arduino-mcp-adapter cross-compilation
+# Makefile for arduino-mcp-adapter and arduino-simulator
 
 # Target architecture for Raspberry Pi Zero 2W (ARM Cortex-A53) - 64-bit
 TARGET = aarch64-unknown-linux-gnu
 REMOTE_HOST = pi
 BINARY_NAME = arduino-mcp-adapter
+SIMULATOR_NAME = arduino-simulator
 
-.PHONY: setup build install clean
+.PHONY: setup build build-adapter build-adapter-pi build-simulator install clean run-simulator test-connection
 
-# Default target
+# Default target - build all three binaries
 all: build
+
+# Build all: adapter for host, adapter for Pi, and simulator for host
+build: build-adapter build-adapter-pi build-simulator
 
 # Setup cross-compilation toolchain
 setup:
-	@echo "Setting up 	cross-compilation for $(TARGET)..."
+	@echo "Setting up cross-compilation for $(TARGET)..."
 	. ~/.cargo/env && rustup target add $(TARGET)
 	sudo apt update
 	sudo apt install -y gcc-aarch64-linux-gnu
 
-# Build for target architecture
-build:
-	@echo "Cross-compiling for $(TARGET)..."
+# Build adapter for host machine (default/native target)
+build-adapter:
+	@echo "Building $(BINARY_NAME) for host..."
+	. ~/.cargo/env && cargo build --release --bin $(BINARY_NAME)
+
+# Build adapter for Raspberry Pi (cross-compile)
+build-adapter-pi:
+	@echo "Cross-compiling $(BINARY_NAME) for $(TARGET)..."
 	. ~/.cargo/env && \
 	PKG_CONFIG_ALLOW_CROSS=1 \
 	PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig \
 	CC=aarch64-linux-gnu-gcc \
 	CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-	cargo build --release --target $(TARGET)
+	cargo build --release --bin $(BINARY_NAME) --target $(TARGET)
 
-# Install binary to Raspberry Pi as systemd service
-install: build
+# Build simulator for host machine
+build-simulator:
+	@echo "Building $(SIMULATOR_NAME) for host..."
+	. ~/.cargo/env && cargo build --release --bin $(SIMULATOR_NAME)
+
+# Install binary to Raspberry Pi as systemd service (depends only on Pi build)
+install: build-adapter-pi
 	@echo "Installing $(BINARY_NAME) to $(REMOTE_HOST)..."
 	@echo "Stopping existing service if running..."
 	ssh $(REMOTE_HOST) "sudo systemctl stop $(BINARY_NAME) 2>/dev/null || true"
@@ -54,3 +68,8 @@ clean:
 test-connection:
 	@echo "Testing connection to $(REMOTE_HOST)..."
 	ssh $(REMOTE_HOST) "echo 'Connection successful'"
+
+# Run simulator on host machine
+run-simulator:
+	@echo "Running $(SIMULATOR_NAME)..."
+	. ~/.cargo/env && cargo run --bin $(SIMULATOR_NAME)
