@@ -5,7 +5,8 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tracing::{debug, error, info};
 
@@ -512,8 +513,15 @@ impl McpServer {
             tool_names.push("runPythonScript".to_string());
         }
 
-        match python_runner::run_python_script(script, timeout_secs, &tool_names, base_url.as_str())
-            .await
+        let timeout_duration = Duration::from_secs(timeout_secs);
+
+        match python_runner::run_python_script(
+            script,
+            timeout_duration,
+            &tool_names,
+            base_url.as_str(),
+        )
+        .await
         {
             Ok(output) => {
                 let result = serde_json::json!({
@@ -549,27 +557,13 @@ impl McpServer {
     }
 
     fn python_runner_tool() -> Tool {
-        Tool {
-            name: "runPythonScript".to_string(),
-            description: "Execute a Python 3 script with access to the robot tools namespace. Use this when you need loops, conditionals, or batching before invoking MCP tools. Inside the script call other tools as `tools.FUNCNAME(arg=value, ...)`. The combined console output is returned as text.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "script": {
-                        "type": "string",
-                        "description": "Python 3 source code to execute. Use the provided `tools` namespace to call MCP functions."
-                    },
-                    "timeout": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 300,
-                        "default": 60,
-                        "description": "Optional timeout in seconds (default 60, maximum 300)."
-                    }
-                },
-                "required": ["script"]
-            }),
-        }
+        static TOOL_CACHE: OnceLock<Tool> = OnceLock::new();
+        TOOL_CACHE
+            .get_or_init(|| {
+                serde_json::from_str(include_str!("resources/runPythonScript.json"))
+                    .expect("runPythonScript.json must deserialize to Tool")
+            })
+            .clone()
     }
 
     fn json_response(body: String) -> Response<BoxBody<hyper::body::Bytes, hyper::Error>> {

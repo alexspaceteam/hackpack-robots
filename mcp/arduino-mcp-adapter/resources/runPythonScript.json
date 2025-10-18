@@ -1,0 +1,21 @@
+{
+  "name": "runPythonScript",
+  "description": "Execute a Python 3 script with access to the robot tools namespace. Use this when you need low-latency loops, conditionals, or batching when invoking MCP tools. Inside the script call any other tools simply as `tools.FUNCNAME(arg=value, ...)`. The combined console output is returned as text.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "script": {
+        "type": "string",
+        "description": "Python 3 source code to execute. Use the provided `tools` namespace to call MCP functions."
+      },
+      "timeout": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 300,
+        "default": 60,
+        "description": "Optional timeout in seconds (default 60, maximum 300)."
+      }
+    },
+    "required": ["script"]
+  }
+}

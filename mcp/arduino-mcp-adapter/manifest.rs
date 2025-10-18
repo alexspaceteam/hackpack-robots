@@ -31,7 +31,7 @@ pub struct Parameter {
     pub param_type: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tool {
     pub name: String,
     pub description: String,

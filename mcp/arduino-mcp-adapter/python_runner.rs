@@ -10,7 +10,7 @@ use tokio::time;
 /// Execute the provided Python script with a prelude that exposes MCP tools.
 pub async fn run_python_script(
     script: &str,
-    timeout_secs: u64,
+    timeout: Duration,
     tool_names: &[String],
     endpoint: &str,
 ) -> Result<String> {
@@ -47,8 +47,8 @@ pub async fn run_python_script(
         .spawn()
         .context("Failed to spawn python3 process. Ensure python3 is installed and on PATH.")?;
 
-    let timeout_duration = Duration::from_secs(timeout_secs);
-    let output = match time::timeout(timeout_duration, child.wait_with_output()).await {
+    let timeout_secs = timeout.as_secs();
+    let output = match time::timeout(timeout, child.wait_with_output()).await {
         Ok(result) => result.context("Failed to collect python3 output")?,
         Err(_) => {
             return Err(anyhow!(
@@ -97,87 +97,24 @@ fn format_console_output(stdout: String, stderr: String) -> String {
 }
 
 fn build_prelude(tool_names: &[String], endpoint: &str) -> String {
-    let mut prelude = format!(
-        r#"import json
-import urllib.request
-import urllib.error
+    const TEMPLATE: &str = include_str!("resources/python_prelude.py.tmpl");
 
-MCP_ENDPOINT = {endpoint:?}
-
-
-class _ToolsNamespace:
-    def __init__(self, endpoint):
-        self._endpoint = endpoint
-        self._call_id = 0
-
-    def _call(self, name, **kwargs):
-        self._call_id += 1
-        payload = {{
-            "jsonrpc": "2.0",
-            "id": f"python-runner-{{self._call_id}}",
-            "method": "tools/call",
-            "params": {{
-                "name": name,
-                "arguments": kwargs,
-            }},
-        }}
-
-        data = json.dumps(payload).encode("utf-8")
-        request = urllib.request.Request(
-            self._endpoint,
-            data=data,
-            headers={{"Content-Type": "application/json"}},
-            method="POST",
-        )
-
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                response_data = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(f"MCP HTTP error calling {{name}}: {{exc.code}} {{body}}") from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"Failed to reach MCP endpoint for {{name}}: {{exc}}") from exc
-
-        message = json.loads(response_data)
-        if message.get("error"):
-            err = message["error"]
-            raise RuntimeError(
-                f"MCP error calling {{name}}: {{err.get('message')}} (code {{err.get('code')}})"
+    let endpoint_literal = serde_json::to_string(endpoint).unwrap();
+    let trampolines = tool_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let name_literal = serde_json::to_string(name).unwrap();
+            format!(
+                "_tool_fn_{idx} = _wrap_tool({name_literal})\nsetattr(tools, {name_literal}, _tool_fn_{idx})",
+                idx = index,
+                name_literal = name_literal
             )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
-        result = message.get("result") or {{}}
-        content = result.get("content") if isinstance(result, dict) else None
-        if isinstance(content, list):
-            texts = [item.get("text", "") for item in content if item.get("type") == "text"]
-            if len(texts) == 1:
-                return texts[0]
-            if texts:
-                return "\n".join(texts)
-        return result
-
-
-tools = _ToolsNamespace(MCP_ENDPOINT)
-
-
-def _wrap_tool(name):
-    def _inner(**kwargs):
-        return tools._call(name, **kwargs)
-    _inner.__name__ = name
-    return _inner
-
-"#,
-        endpoint = endpoint
-    );
-
-    for (index, name) in tool_names.iter().enumerate() {
-        let helper_name = format!("_tool_fn_{}", index);
-        prelude.push_str(&format!(
-            "{helper} = _wrap_tool({name_literal})\nsetattr(tools, {name_literal}, {helper})\n\n",
-            helper = helper_name,
-            name_literal = serde_json::to_string(name).unwrap()
-        ));
-    }
-
-    prelude
+    TEMPLATE
+        .replace("__MCP_ENDPOINT__", &endpoint_literal)
+        .replace("__TOOL_TRAMPOLINES__", &trampolines)
 }

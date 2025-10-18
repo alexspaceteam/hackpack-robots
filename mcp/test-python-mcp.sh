@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -e
 
 source "$(dirname "$0")/test-common.sh"
 
@@ -11,7 +11,6 @@ echo ""
 TEST_LINE="/tmp/test-line-$$-tty"
 TEST_LOG_SIM="/tmp/simulator-$$-log"
 TEST_LOG_ADAPTER="/tmp/adapter-$$-log"
-TEST_LOG=""
 SIMULATOR_PID=""
 ADAPTER_PID=""
 ADAPTER_PORT=9095
@@ -151,8 +150,22 @@ fi
 echo "      ✓ Timeout parameter validation enforced"
 
 echo ""
-echo "All runPythonScript tests passed."
+echo "======================================"
+echo "✓ All runPythonScript tests passed!"
+echo "======================================"
+
+echo ""
+echo "Shutting down..."
 
 graceful_shutdown ADAPTER_PID "Adapter"
 graceful_shutdown SIMULATOR_PID "Simulator"
-cleanup_processes 0 SIMULATOR_PID ADAPTER_PID
+
+if [ -n "$ADAPTER_PID" ]; then
+    kill -9 "$ADAPTER_PID" 2>/dev/null || true
+fi
+if [ -n "$SIMULATOR_PID" ]; then
+    kill -9 "$SIMULATOR_PID" 2>/dev/null || true
+fi
+
+rm -f "$TEST_LINE" "$TEST_LOG_SIM" "$TEST_LOG_ADAPTER"
+exit 0
