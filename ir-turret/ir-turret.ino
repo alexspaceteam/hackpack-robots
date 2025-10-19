@@ -213,13 +213,14 @@ void setup() { //this is our setup function - it runs once on start up, and is b
 }
 #pragma endregion SETUP
 
+MCP_TOOL("Turn on engine and immmediatly start moving backward. WARNING: dont leave the robot running, use stopWheels when done")
 void startMoveBackward() {
-  leftWheel.write(90-wheelspeed);
-  rightWheel.write(90+wheelspeed);
+  leftWheel.write(90+wheelspeed);
+  rightWheel.write(90-wheelspeed);
 }
 
 
-MCP_TOOL("Move turret backward on wheels for specified milliseconds")
+MCP_TOOL("Move turret backward on wheels for specified milliseconds and then stop")
 void moveBackward(int duration_ms) {
   startMoveBackward();
   delay(duration_ms);
@@ -227,9 +228,10 @@ void moveBackward(int duration_ms) {
 }
 
 
+MCP_TOOL("Turn on engine and immmediatly start moving forward. WARNING: dont leave the robot running, use stopWheels when done")
 void startMoveForward() {
-  leftWheel.write(90+wheelspeed);
-  rightWheel.write(90-wheelspeed);
+  leftWheel.write(90-wheelspeed);
+  rightWheel.write(90+wheelspeed);
 }
 
 MCP_TOOL("Move turret forward on wheels for specified milliseconds")
