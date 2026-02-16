@@ -531,8 +531,12 @@ void loop() {
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("PRINT CANCELLED");
+
         penUp(); // Lift pen
-        delay(1500); // Show message briefly
+        delay(500); // Give pen time to lift
+
+        // Move Y axis to home position
+        yStepper.step(-2250);
 
         // Reset state
         xpos = 0;
@@ -547,6 +551,8 @@ void loop() {
         space = x_scale * 5;
 
         releaseMotors();
+
+        delay(1000); // Show cancelled message
         lcd.clear();
         currentState = Editing;
         prevState = Printing;
