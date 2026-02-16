@@ -107,6 +107,8 @@ jState prevJoyState = MIDDLE;
 
 boolean pPenOnPaper = false; // pen on paper in previous cycle
 int lineCount = 0;
+boolean cancelPrinting = false; // flag to cancel printing when button is pressed
+unsigned long printStartTime = 0; // time when printing started
 
 int xpos = 0;
 int ypos = 0;
@@ -516,10 +518,40 @@ void loop() {
 
         lcd.setCursor(0, 0);
         lcd.print(PRINTING);  //update screen
+
+        cancelPrinting = false; // Reset cancel flag
+        printStartTime = millis(); // Record when printing started
       }
 
       // ----------------------------------------------- plot text
       plotText(text, xpos, ypos);
+
+      // Check if printing was cancelled
+      if (cancelPrinting) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("PRINT CANCELLED");
+        penUp(); // Lift pen
+        delay(1500); // Show message briefly
+
+        // Reset state
+        xpos = 0;
+        ypos = 0;
+        cancelPrinting = false;
+
+        // Reset scales to default
+        selectedFontSize = 1;
+        x_scale = 230/3;
+        y_scale = 230/3;
+        scale = x_scale;
+        space = x_scale * 5;
+
+        releaseMotors();
+        lcd.clear();
+        currentState = Editing;
+        prevState = Printing;
+        break;
+      }
 
       line(xpos + space, 0, 0);  // move to new line
       xpos = 0;
@@ -554,6 +586,12 @@ void plotText(String &str, int x, int y) {  //takes in our label as a string, an
   Serial.println("plot string");
   Serial.println(str);
   for (int i = 0; i < str.length(); i++) {  //for each letter in the string (expressed as "while i is less than string length")
+    // Check if printing was cancelled
+    if (cancelPrinting) {
+      Serial.println("Print cancelled!");
+      return;
+    }
+
     char c = char(str.charAt(i));           //store the next character to plot on it's own
     if (byte(c) != 195) {
       if (c == ' ') {  //if it's a space, add a space.
@@ -665,6 +703,10 @@ void plotCharacter(char c, int x, int y) {  //this receives info from plotText f
   Serial.print("letter: ");
   Serial.println(c);
   for (int i = 0; i < 14; i++) {  // go through each vector of the character
+    // Check if printing was cancelled
+    if (cancelPrinting) {
+      return;
+    }
 
     int v = vector[character][i];
     if (v == 200) {  // no more vectors in this array
@@ -740,6 +782,12 @@ void line(int newx, int newy, bool drawing) {
   if (dx > dy) {
     over = dx / 2;
     for (i = 0; i < dx; i++) {  //for however much our current position differs from the target,
+      // Check for cancel button press every 20 steps (only after 1 second)
+      if (i % 20 == 0 && (millis() - printStartTime) > 1000 && digitalRead(14) == LOW) {
+        cancelPrinting = true;
+        return;
+      }
+
       xStepper.step(dirx);      //do a step in that direction (remember, dirx is always going to be either 1 or -1 from the ternary operator above)
 
       // Serial.print("Xsteps: ");
@@ -760,6 +808,12 @@ void line(int newx, int newy, bool drawing) {
   } else {
     over = dy / 2;
     for (i = 0; i < dy; i++) {
+      // Check for cancel button press every 20 steps (only after 1 second)
+      if (i % 20 == 0 && (millis() - printStartTime) > 1000 && digitalRead(14) == LOW) {
+        cancelPrinting = true;
+        return;
+      }
+
       yStepper.step(diry);
       // Serial.print("Ysteps: ");
       // Serial.print(diry);
