@@ -291,17 +291,31 @@ void loop() {
       // Editing mode
       if (prevState != Editing) {
         lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print(":");
+        lcd.setCursor(1, 0);
+        // Print existing text when entering edit mode
+        if (text.length() <= 15) {
+          lcd.print(text);
+        } else {
+          lcd.print(text.substring(0, 15));
+          lcd.setCursor(0, 1);
+          lcd.print(text.substring(15, min(31, (int)text.length())));
+        }
         prevState = Editing;
       }
-      //lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print(":");
-      lcd.setCursor(1, 0);
-      lcd.print(text);
 
       // Check if the joystick is moved up (previous letter) or down (next letter)
+      // Position cursor at the correct location based on text length (only if not at max)
+      if (text.length() < 31) {
+        if (text.length() < 15) {
+          lcd.setCursor(text.length() + 1, 0);  // On first line after the text
+        } else {
+          lcd.setCursor(text.length() - 15, 1);  // On second line
+        }
+      }
 
-      if (joyUp) {  //UP (previous character)
+      if (text.length() < 31 && joyUp) {  //UP (previous character)
         Serial.println(currentCharacter);
         if (currentCharacter > 0) {
           currentCharacter--;
@@ -311,7 +325,7 @@ void loop() {
         lcd.print(alphabet[currentCharacter]);
         delay(250);  // Delay to prevent rapid scrolling
 
-      } else if (joyDown) {  //DOWN (next character)
+      } else if (text.length() < 31 && joyDown) {  //DOWN (next character)
         Serial.println(currentCharacter);
         if (currentCharacter < (alphabetSize - 1)) {
           currentCharacter++;  //increment character value
@@ -320,7 +334,8 @@ void loop() {
         }
         lcd.print(alphabet[currentCharacter]);
         delay(250);  // Delay to prevent rapid scrolling
-      } else {
+      } else if (text.length() < 31) {
+        // Blinking cursor showing current character selection (only if not at max)
         if (millis() % 600 < 450) {
           lcd.print(alphabet[currentCharacter]);
         } else {
@@ -334,33 +349,55 @@ void loop() {
         if (text.length() > 0) {
           text.remove(text.length() - 1);
           lcd.setCursor(0, 0);
-          lcd.print(MENU_CLEAR);  //clear and reprint the string so characters dont hang
+          lcd.print(MENU_CLEAR);  //clear first line
+          lcd.setCursor(0, 1);
+          lcd.print("                ");  //clear second line
+          // Redraw text properly across both lines
           lcd.setCursor(1, 0);
-          lcd.print(text);
+          if (text.length() <= 15) {
+            lcd.print(text);
+          } else {
+            lcd.print(text.substring(0, 15));
+            lcd.setCursor(0, 1);
+            lcd.print(text.substring(15, min(31, (int)text.length())));
+          }
         }
         delay(250);  // Delay to prevent rapid multiple presses
 
       } else if (joyRight) {  //RIGHT adds a space or character to the label
-        if (currentCharacter == 0) {
-          text += ' ';  //add a space if the character is _
-        } else {
-          text += alphabet[currentCharacter];  //add the current character to the text
-          currentCharacter = 0;
+        if (text.length() < 31) {  // Only add if we haven't reached the 31 character limit
+          if (currentCharacter == 0) {
+            text += ' ';  //add a space if the character is _
+          } else {
+            text += alphabet[currentCharacter];  //add the current character to the text
+            currentCharacter = 0;
+          }
+          lcd.setCursor(0, 0);
+          lcd.print(MENU_CLEAR);  //clear first line
+          lcd.setCursor(0, 1);
+          lcd.print("                ");  //clear second line
+          // Redraw text properly across both lines
+          lcd.setCursor(1, 0);
+          if (text.length() <= 15) {
+            lcd.print(text);
+          } else {
+            lcd.print(text.substring(0, 15));
+            lcd.setCursor(0, 1);
+            lcd.print(text.substring(15, min(31, (int)text.length())));
+          }
         }
-        lcd.setCursor(0, 0);
-        lcd.print(MENU_CLEAR);  //clear and reprint the string so characters dont hang
-        lcd.setCursor(1, 0);
-        lcd.print(text);
         delay(250);  // Delay to prevent rapid multiple presses
       }
 
       if (button1.isPressed()) {
-        // Single click: Add character and reset alphabet scroll
-        if (currentCharacter == 0) {
-          text += ' ';  //add a space if the character is _
-        } else {
-          text += alphabet[currentCharacter];  //add the current character to the text
-          currentCharacter = 0;                // reset for the next character
+        // Single click: Add character and go to print confirmation
+        if (text.length() < 31) {  // Only add if we haven't reached the 31 character limit
+          if (currentCharacter == 0) {
+            text += ' ';  //add a space if the character is _
+          } else {
+            text += alphabet[currentCharacter];  //add the current character to the text
+            currentCharacter = 0;                // reset for the next character
+          }
         }
         lcd.clear();
         currentState = PrintConfirmation;
