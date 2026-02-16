@@ -91,8 +91,8 @@ MCP_DESCRIPTION(
 //////////////////////////////////////////////////
 #pragma region PINS AND PARAMS
 //this is where we store global variables!
-#define PASSCODE_LENGTH 6
-#define CORRECT_PASSCODE "123654" // Change this to your desired passcode
+#define PASSCODE_LENGTH 5
+#define CORRECT_PASSCODE "15358" // Change this to your desired passcode
 char passcode[PASSCODE_LENGTH + 1] = ""; // Buffer to store user input passcode
 bool passcodeEntered = false; // Flag to indicate if passcode has been entered correctly
 bool autofire = false;
@@ -112,7 +112,7 @@ int lastPitchServoVal = 90;
 int lastRollServoVal = 90;
 
 int pitchMoveSpeed = 8; //this variable is the angle added to the pitch servo to control how quickly the PITCH servo moves - try values between 3 and 10
-int yawMoveSpeed = 90; //this variable is the speed controller for the continuous movement of the YAW servo motor. It is added or subtracted from the yawStopSpeed, so 0 would mean full speed rotation in one direction, and 180 means full rotation in the other. Try values between 10 and 90;
+int yawMoveSpeed = 25; //this variable is the speed controller for the continuous movement of the YAW servo motor. It is added or subtracted from the yawStopSpeed, so 0 would mean full speed rotation in one direction, and 180 means full rotation in the other. Try values between 10 and 90;
 int yawStopSpeed = 90; //value to stop the yaw motor - keep this at 90
 int rollMoveSpeed = 90; //this variable is the speed controller for the continuous movement of the ROLL servo motor. It is added or subtracted from the rollStopSpeed, so 0 would mean full speed rotation in one direction, and 180 means full rotation in the other. Keep this at 90 for best performance / highest torque from the roll motor when firing.
 int rollStopSpeed = 90; //value to stop the roll motor - keep this at 90
@@ -126,6 +126,9 @@ int pitchMin = 33; // this sets the minimum angle of the pitch servo to prevent 
 // Ultrasonic Sensor Pins
 const int trigPin = 7;
 const int echoPin = 8;
+const int pitchPin = 2;
+const int yawPin = 10;
+const int rollPin = 12;
 
 const int speakerPin = 6;
 
@@ -133,14 +136,20 @@ const int greenPin = 14;
 const int yellowPin = 15;
 const int redPin = 16;
 
-const int leftWheelPin = 4;
-const int rightWheelPin = 5;
-const int wheelspeed = 8;
+const int leftWheelPin = 4;  //white
+const int rightWheelPin = 5; //green
+const int wheelspeed = 25;
 
 const int laserPin = 17;
 
+const int turningPin = 3;
+
+const int wheelHome = 86;
+const int maxWheelRotation = 86;
+
 Servo leftWheel;
 Servo rightWheel;
+Servo steeringMotor;
 
 // Ultrasonic Distance Variables
 long duration;
@@ -159,10 +168,11 @@ void shakeHeadNo(int moves = 3);
 
 void setup() { //this is our setup function - it runs once on start up, and is basically where we get everything "set up"
     Serial.begin(115200);
+    Serial.println("SETUP");
 
-    yawServo.attach(10); //attach YAW servo to pin 10
-    pitchServo.attach(11); //attach PITCH servo to pin 11
-    rollServo.attach(12); //attach ROLL servo to pin 12
+    yawServo.attach(yawPin);
+    pitchServo.attach(pitchPin);
+    rollServo.attach(rollPin);
 
     pinMode(trigPin, OUTPUT);
     pinMode(echoPin, INPUT);
@@ -171,9 +181,9 @@ void setup() { //this is our setup function - it runs once on start up, and is b
     pinMode(yellowPin, OUTPUT);
     pinMode(redPin, OUTPUT);
     pinMode(laserPin, OUTPUT);
-    leftWheel.attach(leftWheelPin);
-    rightWheel.attach(rightWheelPin);
-    stopWheels();
+    steeringMotor.attach(turningPin);
+    // //steeringMotor.write(90);
+    // stopWheels();
 
     for(int i=0; i<3; i++) {
         tone(speakerPin, 5000);
@@ -212,11 +222,21 @@ void setup() { //this is our setup function - it runs once on start up, and is b
   homeServos(); //set servo motors to home position
 }
 #pragma endregion SETUP
+MCP_TOOL("sets steeringMotor poisition. n is a target angle 0..180")
+void setSteeringMotorPosition(int n) {
+    steeringMotor.write(n);
+}
+
+
 
 MCP_TOOL("Turn on engine and immmediatly start moving backward. WARNING: dont leave the robot running, use stopWheels when done")
 void startMoveBackward() {
-  leftWheel.write(90+wheelspeed);
-  rightWheel.write(90-wheelspeed);
+    leftWheel.attach(leftWheelPin);
+    rightWheel.attach(rightWheelPin);
+
+    leftWheel.write(90+wheelspeed);
+    rightWheel.write(90-wheelspeed);
+    steeringMotor.write(wheelHome);
 }
 
 
@@ -230,8 +250,11 @@ void moveBackward(int duration_ms) {
 
 MCP_TOOL("Turn on engine and immmediatly start moving forward. WARNING: dont leave the robot running, use stopWheels when done")
 void startMoveForward() {
-  leftWheel.write(90-wheelspeed);
-  rightWheel.write(90+wheelspeed);
+    leftWheel.attach(leftWheelPin);
+    rightWheel.attach(rightWheelPin);
+    leftWheel.write(90-wheelspeed);
+    rightWheel.write(90+wheelspeed);
+    steeringMotor.write(wheelHome);
 }
 
 MCP_TOOL("Move turret forward on wheels for specified milliseconds")
@@ -244,8 +267,11 @@ void moveForward(int duration_ms) {
 
 
 void startTurnLeft() {
-  leftWheel.write(90-wheelspeed);
-  rightWheel.write(90-wheelspeed);
+    leftWheel.attach(leftWheelPin);
+    rightWheel.attach(rightWheelPin);
+    leftWheel.write(90-wheelspeed/2);
+    rightWheel.write(90+wheelspeed);
+    steeringMotor.write(wheelHome-maxWheelRotation);
 }
 
 MCP_TOOL("Turn turret left on wheels for specified milliseconds")
@@ -256,8 +282,11 @@ void turnLeft(int duration_ms) {
 }
 
 void startTurnRight() {
-  leftWheel.write(90+wheelspeed);
-  rightWheel.write(90+wheelspeed);
+    leftWheel.attach(leftWheelPin);
+    rightWheel.attach(rightWheelPin);
+    leftWheel.write(90-wheelspeed);
+    rightWheel.write(90+wheelspeed/2);
+    steeringMotor.write(wheelHome+maxWheelRotation);
 }
 
 MCP_TOOL("Turn turret right on wheels for specified milliseconds")
@@ -269,8 +298,10 @@ void turnRight(int duration_ms) {
 
 MCP_TOOL("Stop turret wheel movement")
 void stopWheels() {
-  leftWheel.write(90);
-  rightWheel.write(90);
+    leftWheel.write(90);
+    rightWheel.write(90);
+    leftWheel.detach();
+    rightWheel.detach();
 }
 
 MCP_TOOL("Turn laser aiming sight on")
@@ -312,14 +343,13 @@ void toggleLaserAim() {
 #pragma region LOOP
 
 void loop() {
-    mcp_handler.process_serial();
+    //mcp_handler.process_serial();
     if (IrReceiver.decode()) { //if we have recieved a comman this loop...
         int command = IrReceiver.decodedIRData.command; //store it in a variable
         IrReceiver.resume(); // Enable receiving of the next value
         handleCommand(command); // Handle the received command through switch statements
     }
     delay(5); //delay for smoothness
-
     if (autofire) {
         // --- ULTRASONIC DISTANCE MEASUREMENT ---
         digitalWrite(trigPin, LOW);
@@ -421,6 +451,7 @@ void handleCommand(int command) {
                 leftMove(1);
             } else {
                 shakeHeadNo();
+                steeringMotor.write(wheelHome-maxWheelRotation);
             }
             break;
 
@@ -430,6 +461,7 @@ void handleCommand(int command) {
               rightMove(1);
             } else {
                 shakeHeadNo();
+                steeringMotor.write(wheelHome+maxWheelRotation);
             }
             break;
 
@@ -440,6 +472,7 @@ void handleCommand(int command) {
                 Serial.println("FIRE");
             } else {
                 shakeHeadNo();
+                steeringMotor.write(wheelHome);
             }
             break;
 
@@ -554,6 +587,8 @@ void handleCommand(int command) {
          default:
             // Unknown command, do nothing
             Serial.println("Command Read Failed or Unknown, Try Again");
+            Serial.println(command);
+            IrReceiver.begin(9, ENABLE_LED_FEEDBACK);
             break;
     }
     if (strlen(passcode) == PASSCODE_LENGTH){

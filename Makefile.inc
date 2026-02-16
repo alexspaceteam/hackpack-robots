@@ -64,7 +64,7 @@ install: $(HEX_FILE) $(MCP_MANIFEST_JSON)
 	@VERSION=$$(jq -r '.version' $(MCP_MANIFEST_JSON)); \
 	scp $(MCP_MANIFEST_JSON) $(REMOTE_HOST):~/manifests/$(PROJECT)-$$VERSION.json
 	ssh $(REMOTE_HOST) "killall arduino-mcp-adapter 2>/dev/null || true"
-	ssh $(REMOTE_HOST) avrdude -p atmega328p -c arduino -P /dev/ttyUSB0 -b 115200 -U flash:w:$(PROJECT).ino.hex:i
+	ssh $(REMOTE_HOST) avrdude -p atmega328p -c arduino -P $(PORT) -b 115200 -U flash:w:$(PROJECT).ino.hex:i
 
 clean:
 	@echo "Cleaning build files..."
