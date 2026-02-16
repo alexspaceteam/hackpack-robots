@@ -67,7 +67,7 @@ const int joystickYPin = A1;  // Connect the joystick Y-axis to this analog pin
 const int joystickButtonThreshold = 200;  // Adjust this threshold value based on your joystick
 
 // Menu parameters
-const char alphabet[] = "_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?,.#@"; //alphabet menu
+const char alphabet[] = "_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?,.#@$"; //alphabet menu
 int alphabetSize = sizeof(alphabet) - 1;
 String text;  // Store the label text
 
