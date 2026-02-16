@@ -462,34 +462,40 @@ void loop() {
         lcd.setCursor(0, 0);
         lcd.print("  CHOOSE SIZE   ");
         lcd.setCursor(0, 1);
-        lcd.print("    1    2    3 ");
+        lcd.print("    1   2   3   ");
         cursorPosition = 3; // Start at font size 1
         selectedFontSize = 1;
+        lcd.setCursor(cursorPosition, 1);
+        lcd.print("*");
         prevState = FontSizeSelection;
       }
 
       // Handle joystick left/right to change font size
       if (joyLeft) {
         if (selectedFontSize > 1) {
+          // Clear old star
+          lcd.setCursor(cursorPosition, 1);
+          lcd.print(" ");
           selectedFontSize--;
-          cursorPosition = 3 + (selectedFontSize - 1) * 5; // Calculate cursor position (5 spaces apart)
+          cursorPosition = 3 + (selectedFontSize - 1) * 4; // Calculate cursor position (3 spaces apart)
+          // Draw new star
+          lcd.setCursor(cursorPosition, 1);
+          lcd.print("*");
         }
         delay(200);
       } else if (joyRight) {
         if (selectedFontSize < 3) {
+          // Clear old star
+          lcd.setCursor(cursorPosition, 1);
+          lcd.print(" ");
           selectedFontSize++;
-          cursorPosition = 3 + (selectedFontSize - 1) * 5; // Calculate cursor position (5 spaces apart)
+          cursorPosition = 3 + (selectedFontSize - 1) * 4; // Calculate cursor position (3 spaces apart)
+          // Draw new star
+          lcd.setCursor(cursorPosition, 1);
+          lcd.print("*");
         }
         delay(200);
       }
-
-      // Clear all indicators first and redraw the numbers
-      lcd.setCursor(0, 1);
-      lcd.print("    1    2    3 ");
-
-      // Show indicator at current selection (always visible, not blinking)
-      lcd.setCursor(cursorPosition, 1);
-      lcd.print("*");
 
       if (button1.isPressed()) {
         lcd.clear();
