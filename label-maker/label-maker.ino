@@ -36,6 +36,14 @@
 #include <ezButton.h>
 #include <Servo.h>
 
+#include "../mcp/mcp.hpp"
+
+MCPHandler mcp_handler;
+
+MCP_DESCRIPTION(
+    "Label maker that can print text on tape with adjustable font size (1-3). Uses stepper motors to move a pen and create custom labels."
+)
+
 #pragma endregion LIBRARIES
 
 //////////////////////////////////////////////////
@@ -246,6 +254,7 @@ void setup() {
 //////////////////////////////////////////////////
 #pragma region LOOP
 void loop() {
+  //mcp_handler.process_serial();
 
   button1.loop();
   button1State = button1.getState();
@@ -876,7 +885,82 @@ void resetScreen() {
   lcd.setCursor(1, 0);  //move cursor down to row 1 column 0
   cursorPosition = 1;
 }
+
+MCP_TOOL("Print a label with given text and font size. fontSize must be 1cm, 2cm, or 3cm. Text can be up to 31 characters. Use 1cm by default.")
+void printLabel(const char* labelText, int fontSize) {
+  // Validate font size
+  if (fontSize < 1 || fontSize > 3) {
+    Serial.println("ERROR: Font size must be 1, 2, or 3");
+    return;
+  }
+
+  // Validate text length
+  int textLen = strlen(labelText);
+  if (textLen > 31) {
+    Serial.println("ERROR: Text too long (max 31 characters)");
+    return;
+  }
+
+  // Set the text
+  text = String(labelText);
+
+  // Set font size and update scales
+  selectedFontSize = fontSize;
+  x_scale = (230/3) * selectedFontSize;
+  y_scale = (230/3) * selectedFontSize;
+  scale = x_scale;
+  space = x_scale * 5;
+
+  // Update LCD
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(PRINTING);
+
+  Serial.print("Printing label: ");
+  Serial.print(labelText);
+  Serial.print(" with font size: ");
+  Serial.println(fontSize);
+
+  // Reset position
+  xpos = 0;
+  ypos = 0;
+
+  // Plot the text
+  cancelPrinting = false;
+  printStartTime = millis();
+  plotText(text, xpos, ypos);
+
+  // Check if printing was cancelled
+  if (!cancelPrinting) {
+    // Move to new line and home
+    line(xpos + space, 0, 0);
+    xpos = 0;
+    ypos = 0;
+
+    yStepper.step(-2250);
+    releaseMotors();
+
+    Serial.println("Printing complete!");
+  }
+
+  // Reset text and scales
+  text = "";
+  selectedFontSize = 1;
+  x_scale = 230/3;
+  y_scale = 230/3;
+  scale = x_scale;
+  space = x_scale * 5;
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Print Complete!");
+  delay(1000);
+  lcd.clear();
+}
+
 #pragma endregion FUNCTIONS
+
+#include "build/mcp_bindings.hpp"
 
 //////////////////////////////////////////////////
                //  END CODE  //
